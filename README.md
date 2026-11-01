@@ -104,5 +104,5 @@ certification; no game launch is needed to build.
 
 ## License
 
-The template's [LICENSE](LICENSE) (CC0-1.0) is **unchanged**. The project owner
-still needs to confirm the intended project license; no new license was selected.
+Licensed under the [GNU Lesser General Public License v3.0](LICENSE) (LGPL-3.0).
+The LGPL supplements the [GNU General Public License v3.0](COPYING).
