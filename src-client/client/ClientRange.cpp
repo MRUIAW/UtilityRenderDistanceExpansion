@@ -1,0 +1,339 @@
+#include "range/Side.h"
+#include "range/Commands.h"
+#include "range/Config.h"
+#include "range/Limits.h"
+#include "range/Scope.h"
+#include "range/HookInstall.h"
+#include "mod/UrdeMod.h"
+#include <condition_variable>
+#include <thread>
+#include "ll/api/command/CommandRegistrar.h"
+#include "ll/api/event/EventBus.h"
+#include "ll/api/event/command/ClientCommandRegisterEvent.h"
+#include "ll/api/event/client/ClientExitLevelEvent.h"
+#include "ll/api/event/client/ClientStartJoinLevelEvent.h"
+#include "ll/api/event/world/ClientLevelTickEvent.h"
+#include "ll/api/memory/Hook.h"
+#include "ll/api/service/TargetedBedrock.h"
+#include "ll/api/service/Bedrock.h"
+#include "mc/client/multiplayer/ClientLevel.h"
+#include "mc/client/renderer/game/LevelRenderer.h"
+#include "mc/client/renderer/game/LevelRendererPlayer.h"
+#include "mc/client/renderer/game/LevelRendererShadowCamera.h"
+#include "mc/world/level/BlockSource.h"
+#include "mc/world/level/block/actor/VanillaBlockActor.h"
+
+namespace urde::side {
+namespace {
+struct Config {
+    float entityRange = 128, blockEntityRange = 128, terrainDetail = 128;
+    void validate() const {
+        for (float value : {entityRange,blockEntityRange,terrainDetail}) validateRange(value,MaxBlocks);
+    }
+    void set(std::string const& key, std::string const& text) {
+        float value = parseRange(text,MaxBlocks);
+        if (key == "entityRange") entityRange = value;
+        else if (key == "blockEntityRange") blockEntityRange = value;
+        else if (key == "terrainDetail") terrainDetail = value;
+        else throw std::invalid_argument("Keys: entityRange, blockEntityRange, terrainDetail");
+    }
+    nlohmann::json encode() const {
+        return {{"entityRange",encodeRange(entityRange)}, {"blockEntityRange",encodeRange(blockEntityRange)},
+                {"terrainDetail",encodeRange(terrainDetail)}};
+    }
+    static Config decode(nlohmann::json const& json) {
+        if (!json.is_object() || json.size() != 3) throw std::invalid_argument("Expected exactly the three client range keys");
+        Config result{readRange(json,"entityRange",MaxBlocks), readRange(json,"blockEntityRange",MaxBlocks),
+                      readRange(json,"terrainDetail",MaxBlocks)};
+        result.validate();
+        return result;
+    }
+};
+ConfigStore<Config> config;
+std::atomic<bool> enabled = false, session = false;
+std::atomic<uint64_t> generation = 0;
+// Native pointers never escape the owner thread or the synchronous queue scope.
+// The persistent session identities are compared only on the client tick thread.
+std::atomic<Level const*> ownerLevel = nullptr;
+std::atomic<Dimension const*> ownerDimension = nullptr;
+std::atomic<float> observedFar = 0, observedFog = 0;
+std::mutex ownerMutex;
+std::condition_variable restored;
+std::thread::id ownerThread;
+ll::event::ListenerPtr commandListener, tickListener, exitListener, joinListener;
+bool installed = false;
+
+struct QueueContext {
+    uint64_t generation;
+    LevelRendererCamera* camera;
+    BlockSource* source;
+    Vec3 position;
+    AABB nativeBox;
+    std::shared_ptr<Config const> snapshot;
+    bool actorsFetched = false, blocksFetched = false;
+};
+thread_local QueueContext* queueContext = nullptr;
+thread_local bool nativeRefresh = false;
+
+bool validCamera(LevelRendererCamera& camera) {
+    if (!session.load()) return false;
+    auto client = ll::service::getClientInstance();
+    if (!client || !client->getLevel()) return false;
+    auto* renderer = client->getLevelRenderer();
+    if (!renderer) return false;
+    // Exclude constructor/destructor and detached cameras BEFORE inspecting
+    // their world/view-region members, which may not be initialized there.
+    bool owned = static_cast<LevelRendererCamera*>(renderer->mLevelRendererPlayer.get()) == &camera
+              || static_cast<LevelRendererCamera*>(renderer->mLevelRendererShadowCamera.get()) == &camera
+              || static_cast<LevelRendererCamera*>(renderer->mLevelRendererCloudShadowCamera.get()) == &camera;
+    if (!owned) return false;
+    auto level = ll::service::getMultiPlayerLevel();
+    return level && &*level == &camera.mLevel && &camera.mLevel == ownerLevel
+        && camera.mDimension == ownerDimension && camera.mViewRegion->get()
+        && camera.mDimension && &camera.mViewRegion->get()->getLevel() == &*level
+        && &camera.mViewRegion->get()->getDimension() == camera.mDimension;
+}
+bool validScope(QueueContext const& context) {
+    return enabled && session && context.generation == generation
+        && context.source == context.camera->mViewRegion->get()
+        && validCamera(*context.camera);
+}
+AABB cube(Vec3 const& p, float r) {
+    // Explicit component arithmetic matches the native ordinary collector.
+    return {{p.x-r,p.y-r,p.z-r},{p.x+r,p.y+r,p.z+r}};
+}
+bool same(Vec3 const& a, Vec3 const& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+bool same(AABB const& a, AABB const& b) { return same(a.min,b.min) && same(a.max,b.max); }
+bool finite(Vec3 const& p) { return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z); }
+
+using Queue = void (LevelRendererCamera::*)(LevelRenderPreRenderUpdateParameters const&);
+using FetchActors = gsl::span<gsl::not_null<Actor*>> (BlockSource::*)(Actor const*, AABB const&, bool, bool);
+using FetchBlockActors = void (BlockSource::*)(AABB const&, std::vector<gsl::not_null<IVanillaRenderBlockActorComponent*>>&, bool);
+using Within = bool (VanillaBlockActor::*)(Vec3 const&) const;
+using FarDetail = void (LevelRendererCamera::*)();
+static_assert(std::is_same_v<decltype(&LevelRendererCamera::queueRenderEntities), Queue>);
+static_assert(std::is_same_v<decltype(&LevelRendererCamera::$queueRenderEntities), Queue>);
+static_assert(std::is_same_v<decltype(static_cast<FetchActors>(&BlockSource::fetchEntities)), FetchActors>);
+static_assert(std::is_same_v<decltype(static_cast<FetchActors>(&BlockSource::$fetchEntities)), FetchActors>);
+static_assert(std::is_same_v<decltype(&BlockSource::fetchRenderBlockActorComponents), FetchBlockActors>);
+static_assert(std::is_same_v<decltype(&VanillaBlockActor::isWithinRenderDistance), Within>);
+static_assert(std::is_same_v<decltype(&VanillaBlockActor::$isWithinRenderDistance), Within>);
+static_assert(std::is_same_v<decltype(&LevelRendererCamera::updateFarChunksDistance), FarDetail>);
+
+LL_TYPE_INSTANCE_HOOK(FarChunks, ll::memory::HookPriority::Normal, LevelRendererCamera,
+    &LevelRendererCamera::updateFarChunksDistance, void) {
+    origin(); // native fog start/end arithmetic is preserved
+    if (!enabled || nativeRefresh || !validCamera(*this)) return;
+    auto snapshot = queueContext && queueContext->camera == this && validScope(*queueContext)
+                  ? queueContext->snapshot : config.active();
+    if (snapshot && snapshot->terrainDetail) mFarChunksDistance = snapshot->terrainDetail;
+    observedFar = mFarChunksDistance;
+    observedFog = mCurrentDistanceFog->mEnd;
+}
+LL_TYPE_INSTANCE_HOOK(QueueEntities, ll::memory::HookPriority::Normal, LevelRendererCamera,
+    &LevelRendererCamera::$queueRenderEntities, void, LevelRenderPreRenderUpdateParameters const& parameters) {
+    auto snapshot = config.active();
+    if (!enabled || !snapshot || !validCamera(*this)) {
+        Scope clear(queueContext, static_cast<QueueContext*>(nullptr));
+        return origin(parameters);
+    }
+    Vec3 position = mCameraTargetPos;
+    float fog = mCurrentDistanceFog->mEnd;
+    if (!finite(position) || !std::isfinite(fog) || fog < 0) {
+        Scope clear(queueContext, static_cast<QueueContext*>(nullptr));
+        return origin(parameters);
+    }
+    QueueContext context{generation.load(), this, mViewRegion->get(), position,
+                         cube(position,std::min(72.0f,fog)), std::move(snapshot)};
+    Scope scope(queueContext,&context);
+    origin(parameters);
+}
+LL_TYPE_INSTANCE_HOOK(FetchEntities, ll::memory::HookPriority::Normal, BlockSource,
+    static_cast<FetchActors>(&BlockSource::$fetchEntities), gsl::span<gsl::not_null<Actor*>>,
+    Actor const* except, AABB const& box, bool hitbox, bool display) {
+    auto* source = thisFor<BlockSource>();
+    auto* context = queueContext;
+    if (context && validScope(*context) && context->source == source && !context->actorsFetched
+        && !except && !hitbox && !display && same(box,context->nativeBox)) {
+        context->actorsFetched = true;
+        if (context->snapshot->entityRange)
+            return origin(except,cube(context->position,context->snapshot->entityRange),hitbox,display);
+    }
+    return origin(except,box,hitbox,display); // native span and storage lifetime retained
+}
+LL_TYPE_INSTANCE_HOOK(FetchBlockEntities, ll::memory::HookPriority::Normal, BlockSource,
+    &BlockSource::fetchRenderBlockActorComponents, void, AABB const& box,
+    std::vector<gsl::not_null<IVanillaRenderBlockActorComponent*>>& result, bool flag) {
+    auto* context = queueContext;
+    if (context && validScope(*context) && context->source == this && !context->blocksFetched && flag
+        && &result == &context->camera->mTempBlockActorList.get() && same(box,context->nativeBox)) {
+        context->blocksFetched = true;
+        if (context->snapshot->blockEntityRange)
+            return origin(cube(context->position,context->snapshot->blockEntityRange),result,flag);
+    }
+    origin(box,result,flag);
+}
+LL_TYPE_INSTANCE_HOOK(BlockWithin, ll::memory::HookPriority::Normal, VanillaBlockActor,
+    &VanillaBlockActor::$isWithinRenderDistance, bool, Vec3 const& position) {
+    // Native symbol receives the secondary render-component subobject, not the
+    // BlockActor/complete-object address. Hook::thisFor<T> expects that RECEIVER
+    // base T (see LL Hook.h), and performs the base-to-complete adjustment.
+    auto* actor = thisFor<IVanillaRenderBlockActorComponent>();
+    auto* context = queueContext;
+    if (context && validScope(*context) && context->blocksFetched && context->snapshot->blockEntityRange
+        && same(position,context->position)) {
+        auto const& components = context->camera->mTempBlockActorList.get();
+        auto* component = static_cast<IVanillaRenderBlockActorComponent*>(actor);
+        if (std::any_of(components.begin(),components.end(),[&](auto p) { return p.get() == component; })) {
+            auto const& box = actor->getAABB(); // preserve native virtual AABB selection
+            double dx = double(position.x)-std::clamp(position.x,box.min.x,box.max.x);
+            double dy = double(position.y)-std::clamp(position.y,box.min.y,box.max.y);
+            double dz = double(position.z)-std::clamp(position.z,box.min.z,box.max.z);
+            double r = context->snapshot->blockEntityRange;
+            return dx*dx + dy*dy + dz*dz < r*r;
+        }
+    }
+    return origin(position); // derived overrides are not detoured
+}
+
+// Reacquire live, shared-owned cameras each tick; never cache a raw camera or
+// capture one in a queued command. All three native active renderer cameras are
+// refreshed, including restoration when terrainDetail becomes vanilla.
+void refreshCameras(bool nativeOnly = false) {
+    struct RestoreFlag {
+        bool previous;
+        explicit RestoreFlag(bool value) : previous(std::exchange(nativeRefresh,value)) {}
+        ~RestoreFlag() { nativeRefresh = previous; }
+    } flag(nativeOnly);
+    auto client = ll::service::getClientInstance();
+    if (!client || !client->getLevel()) return;
+    auto* renderer = client->getLevelRenderer();
+    if (!renderer) return;
+    auto player = renderer->mLevelRendererPlayer;
+    auto shadow = renderer->mLevelRendererShadowCamera;
+    auto cloud = renderer->mLevelRendererCloudShadowCamera;
+    for (LevelRendererCamera* camera : {static_cast<LevelRendererCamera*>(player.get()),
+                                       static_cast<LevelRendererCamera*>(shadow.get()),
+                                       static_cast<LevelRendererCamera*>(cloud.get())}) {
+        if (camera && validCamera(*camera)) camera->updateFarChunksDistance();
+    }
+}
+void clearSession() {
+    ++generation;
+    config.clearEffective();
+    ownerLevel = nullptr;
+    ownerDimension = nullptr;
+    { std::lock_guard lock(ownerMutex); session = false; }
+    restored.notify_all();
+}
+void tick(Level& level) {
+    { std::lock_guard lock(ownerMutex); ownerThread = std::this_thread::get_id(); }
+    if (!enabled) {
+        if (session) { refreshCameras(); clearSession(); }
+        return;
+    }
+    auto client = ll::service::getClientInstance();
+    if (!client || client->getLevel() != &level || !client->getLocalPlayer()) return;
+    auto* player = client->getLocalPlayer();
+    auto* dimension = &player->getDimension();
+    if (ownerLevel != &level || ownerDimension != dimension) {
+        // Restore any still-live previous-dimension cameras before forgetting
+        // their identity. Destroyed cameras are never retained or dereferenced.
+        refreshCameras(true);
+        clearSession();
+        ownerLevel = &level;
+        ownerDimension = dimension;
+    }
+    session = true;
+    config.accept();
+    // Explicit refresh, not waiting for an unrelated native distance event.
+    // Reapplying each tick also covers native camera recreation without a pointer cache.
+    refreshCameras();
+}
+std::string describe(Config const& value) {
+    return "entityRange=" + rangeText(value.entityRange) + " blockEntityRange=" + rangeText(value.blockEntityRange)
+         + " terrainDetail=" + rangeText(value.terrainDetail);
+}
+std::string status() {
+    auto active = config.active();
+    return "client requested: " + describe(*config.desired()) + "; effective(last owner tick): "
+         + (active && enabled && session ? describe(*active) : "native/inactive")
+         + "; last refreshed camera F=" + std::to_string(observedFar.load())
+         + " fogEnd=" + std::to_string(observedFog.load())
+         + "; terrainDetail experimental=true (VV/RTX glass NOT guaranteed); enabled collection ignores fog (vanilla keeps native fog limit), visual fog unchanged; "
+           "cube collection / strict 3D block-AABB predicate / integer subchunk-center terrain LOD; "
+           "residency, culler and renderer gates still apply; no server cap";
+}
+void commands() {
+    auto& command = ll::command::CommandRegistrar::getClientInstance().getOrCreateCommand(
+        "urdec", "URDE client-local ranges (terrain detail experimental)");
+    registerControls(command,status,
+        [](auto const& key, auto const& value) { return config.change(key,value) + status(); },
+        [] { return config.reload() + status(); });
+}
+}
+bool load(std::filesystem::path const& dir) {
+    try { config.load(dir / "client.json"); return true; }
+    catch (std::exception const& error) { UrdeMod::getInstance().getSelf().getLogger().error("{}",error.what()); return false; }
+}
+bool enable() {
+    if (installed) { enabled = true; return true; }
+    for (auto symbol : {
+        "?$queueRenderEntities@LevelRendererCamera@@QEAAXAEBULevelRenderPreRenderUpdateParameters@@@Z",
+        "?$fetchEntities@BlockSource@@QEAA?AV?$span@V?$not_null@PEAVActor@@@gsl@@$0?0@gsl@@PEBVActor@@AEBVAABB@@_N2@Z",
+        "?fetchRenderBlockActorComponents@BlockSource@@QEAAXAEBVAABB@@AEAV?$vector@V?$not_null@PEAVIVanillaRenderBlockActorComponent@@@gsl@@V?$allocator@V?$not_null@PEAVIVanillaRenderBlockActorComponent@@@gsl@@@std@@@std@@_N@Z",
+        "?$isWithinRenderDistance@VanillaBlockActor@@QEBA_NAEBVVec3@@@Z",
+        "?updateFarChunksDistance@LevelRendererCamera@@QEAAXXZ"
+    }) if (!requireSymbol(symbol)) return false;
+    // Manual registration permits fail-closed rollback, unlike an auto registrar.
+    if (!installHook<FarChunks>("LevelRendererCamera::updateFarChunksDistance")) return false;
+    if (!installHook<QueueEntities>("LevelRendererCamera::queueRenderEntities")) { FarChunks::unhook(); return false; }
+    if (!installHook<FetchEntities>("BlockSource::fetchEntities")) { QueueEntities::unhook(); FarChunks::unhook(); return false; }
+    if (!installHook<FetchBlockEntities>("BlockSource::fetchRenderBlockActorComponents")) { FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook(); return false; }
+    if (!installHook<BlockWithin>("VanillaBlockActor::isWithinRenderDistance")) {
+        FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook(); return false;
+    }
+    installed = true;
+    ++generation;
+    enabled = true;
+    auto& bus = ll::event::EventBus::getInstance();
+    commandListener = bus.emplaceListener<ll::event::ClientCommandRegisterEvent>([](auto&) { commands(); });
+    tickListener = bus.emplaceListener<ll::event::ClientLevelTickEvent>([](auto& event) { tick(event.level()); });
+    // Restore while cameras still exist; if the exit event is post-teardown there
+    // are no surviving native values to restore. All scopes self-clear on return.
+    exitListener = bus.emplaceListener<ll::event::ClientExitLevelEvent>([](auto&) {
+        refreshCameras(true);
+        clearSession();
+    });
+    joinListener = bus.emplaceListener<ll::event::ClientStartJoinLevelEvent>([](auto&) {
+        refreshCameras(true);
+        clearSession();
+    });
+    if (ll::service::getCommandRegistry(true)) commands();
+    return true;
+}
+bool disable() {
+    enabled = false;
+    ++generation;
+    if (!installed) return true;
+    bool onOwner;
+    { std::lock_guard lock(ownerMutex); onOwner = ownerThread == std::this_thread::get_id(); }
+    if (session && !onOwner) {
+        // No queued callback/captured game pointer can survive DLL unload. The
+        // existing owner tick or exit listener acknowledges native restoration.
+        std::unique_lock lock(ownerMutex);
+        if (!restored.wait_for(lock,std::chrono::seconds(5),[] { return !session.load(); })) {
+            UrdeMod::getInstance().getSelf().getLogger().error("Disable deferred: client owner thread did not acknowledge native terrain restoration; retry, do not force unload");
+            return false;
+        }
+    } else if (session) { refreshCameras(); clearSession(); }
+    auto& bus = ll::event::EventBus::getInstance();
+    for (auto const& listener : {commandListener,tickListener,exitListener,joinListener})
+        if (listener) bus.removeListener(listener);
+    commandListener = tickListener = exitListener = joinListener = nullptr;
+    BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
+    installed = false;
+    config.clearEffective();
+    return true;
+}
+}
