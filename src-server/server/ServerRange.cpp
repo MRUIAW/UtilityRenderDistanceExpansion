@@ -16,14 +16,15 @@ struct Config : replication::Range {
     Config() { rebuild(8); }
     void validate() const { validateRange(float(actorInterestChunks), MaxChunks, true); }
     void set(std::string const& key, std::string const& value) {
-        if (key != "actorInterestChunks") throw std::invalid_argument("Key: actorInterestChunks");
+        if (key != "actor_interest_chunks") throw std::invalid_argument("Key: actor_interest_chunks");
         rebuild(int(parseRange(value, MaxChunks, true)));
     }
-    nlohmann::json encode() const { return {{"actorInterestChunks", encodeRange(float(actorInterestChunks))}}; }
-    static Config decode(nlohmann::json const& json) {
-        if (!json.is_object() || json.size() != 1) throw std::invalid_argument("Expected only actorInterestChunks");
+    nlohmann::json encode() const { return {{"actor_interest_chunks", encodeRange(float(actorInterestChunks))}}; }
+    static Config decode(nlohmann::json json) {
+        json = migrateKeys(std::move(json),{{"actor_interest_chunks","actorInterestChunks"}});
+        if (!json.is_object() || json.size() != 1) throw std::invalid_argument("Expected only actor_interest_chunks");
         Config result;
-        result.rebuild(int(readRange(json,"actorInterestChunks",MaxChunks,true)));
+        result.rebuild(int(readRange(json,"actor_interest_chunks",MaxChunks,true)));
         return result;
     }
 };
@@ -32,7 +33,7 @@ std::atomic<bool> enabled = false;
 ll::event::ListenerPtr commandListener, stopListener;
 bool installed = false;
 std::string describe(Config const& value) {
-    return "actorInterestChunks=" + rangeText(float(value.actorInterestChunks)) + " offsets="
+    return "actor_interest_chunks=" + rangeText(float(value.actorInterestChunks)) + " offsets="
          + std::to_string(value.actorInterestChunks ? value.offsets.size() : 57);
 }
 std::string status() {

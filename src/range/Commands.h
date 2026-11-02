@@ -23,10 +23,10 @@ static_assert(ll::command::ParamTraits<UrdeVanilla>::options() == CommandParamet
 static_assert(magic_enum::enum_count<UrdeClientKey>() == 3);
 static_assert(magic_enum::enum_count<UrdeServerKey>() == 1);
 static_assert(magic_enum::enum_count<UrdeVanilla>() == 1);
-static_assert(magic_enum::enum_name(UrdeClientKey::entityRange) == "entityRange");
-static_assert(magic_enum::enum_name(UrdeClientKey::blockEntityRange) == "blockEntityRange");
-static_assert(magic_enum::enum_name(UrdeClientKey::terrainDetail) == "terrainDetail");
-static_assert(magic_enum::enum_name(UrdeServerKey::actorInterestChunks) == "actorInterestChunks");
+static_assert(magic_enum::enum_name(UrdeClientKey::entity_range) == "entity_range");
+static_assert(magic_enum::enum_name(UrdeClientKey::block_entity_range) == "block_entity_range");
+static_assert(magic_enum::enum_name(UrdeClientKey::terrain_detail) == "terrain_detail");
+static_assert(magic_enum::enum_name(UrdeServerKey::actor_interest_chunks) == "actor_interest_chunks");
 static_assert(magic_enum::enum_name(UrdeVanilla::vanilla) == "vanilla");
 static_assert(ll::reflection::member_count_v<SetNumberParams<UrdeClientKey,float>> == 2);
 static_assert(ll::reflection::member_count_v<SetNumberParams<UrdeServerKey,int>> == 2);

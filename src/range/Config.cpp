@@ -22,6 +22,17 @@ void writeJson(std::filesystem::path const& file, nlohmann::json const& json) {
     if (!MoveFileExW(temp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
         throw std::runtime_error("Cannot replace config (Windows error " + std::to_string(GetLastError()) + ")");
 }
+nlohmann::json migrateKeys(nlohmann::json json, std::initializer_list<std::pair<char const*,char const*>> aliases) {
+    if (!json.is_object()) throw std::invalid_argument("Expected config object");
+    for (auto [key,legacy] : aliases) {
+        if (!json.contains(legacy)) continue;
+        if (json.contains(key))
+            throw std::invalid_argument(std::string("Ambiguous config: both ")+key+" and legacy "+legacy+" are present");
+        json[key] = json.at(legacy);
+        json.erase(legacy);
+    }
+    return json;
+}
 float readRange(nlohmann::json const& json, char const* key, float max, bool integral) {
     auto const& field = json.at(key);
     if (field.is_string() && field.get<std::string>() == "vanilla") return 0;

@@ -3,9 +3,11 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include "nlohmann/json.hpp"
 
 namespace urde {
@@ -60,5 +62,7 @@ private:
     }
 };
 float readRange(nlohmann::json const& json, char const* key, float max, bool integral = false);
+// Normalize legacy aliases before schema validation; reject ambiguous pairs.
+nlohmann::json migrateKeys(nlohmann::json json, std::initializer_list<std::pair<char const*,char const*>> aliases);
 nlohmann::json encodeRange(float value);
 }

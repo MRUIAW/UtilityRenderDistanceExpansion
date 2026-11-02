@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.4]
+
+- Standardize command keys, status fields and JSON on snake_case, matching LL's in-game enum syntax. Legacy camelCase JSON keys load as fallbacks; reject both spellings of any one setting. The next successful save writes only snake_case.
+- Floor client-host replication at native: use the derived `ceil(entity_range/16)` disk only for radius >=5, a superset of the native57 offsets (`dx²+dz² <=17`); otherwise leave native offsets unchanged. Status explains the below-vanilla fallback. Dedicated admin radii1–4 remain allowed; no cube-corner margin is added.
+- Preserve accepted block-entity drawing, diagnostics removal and immutable owner-thread application. Movement update-rate investigation is research only, not a code change.
+
 ## [0.1.3]
 
 - Fix numeric `set` values on both sides: LL 26.51.9 maps the old reflected strings to identifier (`Id`) grammar, which rejects bare numeric tokens. Register native client float/server integer overloads plus a separate hard-enum `vanilla` overload.
@@ -15,7 +21,7 @@
 
 ## [0.1.1]
 
-- Share the scoped server-Level-tick/actor-replication/sorted-position lever in `src/range/Replication.*`; client local-world/LAN hosting derives its immutable disk from `ceil(entityRange/16)`, with native vanilla behavior and no new setting. Dedicated `/urde` remains independent.
+- Share the scoped server-Level-tick/actor-replication/sorted-position lever in `src/range/Replication.*`; client local-world/LAN hosting derives its immutable disk from `ceil(entity_range/16)`, with native vanilla behavior and no new setting. Dedicated `/urde` remains independent. (0.1.4 adds the native floor.)
 - Show derived local replication radius and current-generation hosting activity in `/urdec status`.
 - Statically verify block-entity predicate position and collector arguments; retain matching guards rather than invent an unproven chest fix. Preserve downstream culler, frustum and renderer behavior.
 - Add temporary rate-limited LL block-entity diagnostics (fetch matching/reasons/list size, predicate takeover/fallback reasons/position sample, maximum accepted distance), and replace linear membership scans with a per-queue hash set.

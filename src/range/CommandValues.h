@@ -6,8 +6,8 @@
 
 namespace urde {
 // External linkage for LL's reflected parameters and hard-enum registration.
-enum class UrdeClientKey { entityRange, blockEntityRange, terrainDetail };
-enum class UrdeServerKey { actorInterestChunks };
+enum class UrdeClientKey { entity_range, block_entity_range, terrain_detail };
+enum class UrdeServerKey { actor_interest_chunks };
 enum class UrdeVanilla { vanilla };
 
 // Keep the existing string-based validation/persistence path. to_chars uses a

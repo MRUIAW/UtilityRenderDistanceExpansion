@@ -7,7 +7,10 @@ namespace urde {
 inline constexpr int MaxChunks = 32;
 inline constexpr float MaxBlocks = 512;
 inline int localReplicationChunks(float blocks) {
-    return int(std::ceil(double(blocks) / 16.0)); // avoid positive float underflow; zero is vanilla
+    int radius = int(std::ceil(double(blocks) / 16.0));
+    // Native 57 offsets satisfy x*x+z*z <=17; radius4 misses (4,1).
+    // Only replace with a superset. No extra margin for collector cube corners.
+    return radius >= 5 ? radius : 0; // zero leaves native offsets untouched
 }
 constexpr int diskCount(int radius) {
     int count = 0;

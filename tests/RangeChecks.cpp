@@ -23,10 +23,18 @@ int main() {
     using namespace urde;
     assert(diskCount(8) == 197);
     assert(localReplicationChunks(0) == 0);
-    assert(localReplicationChunks(0.01f) == 1);
-    assert(localReplicationChunks(std::numeric_limits<float>::denorm_min()) == 1);
-    assert(localReplicationChunks(16) == 1);
-    assert(localReplicationChunks(16.01f) == 2);
+    assert(localReplicationChunks(0.01f) == 0);
+    assert(localReplicationChunks(std::numeric_limits<float>::denorm_min()) == 0);
+    assert(localReplicationChunks(16) == 0);
+    assert(localReplicationChunks(16.01f) == 0);
+    assert(localReplicationChunks(64) == 0);
+    assert(localReplicationChunks(std::nextafter(64.0f,128.0f)) == 5);
+    assert(localReplicationChunks(80) == 5);
+    int nativeCount = 0;
+    for (int x = -5; x <= 5; ++x) for (int z = -5; z <= 5; ++z) {
+        if (x*x+z*z <= 17) { ++nativeCount; assert(x*x+z*z <= 5*5); }
+    }
+    assert(nativeCount == 57 && 4*4+1 > 4*4); // radius4 misses native (4,1)
     assert(localReplicationChunks(128) == 8);
     assert(localReplicationChunks(MaxBlocks) == MaxChunks);
     assert(diskCount(4) == 49);
@@ -92,6 +100,17 @@ int main() {
         assert(rejected);
     }
     assert(CheckConfig::decode({{"range","vanilla"}}).range == 0);
+    auto aliases = {std::pair{"entity_range","entityRange"}, std::pair{"block_entity_range","blockEntityRange"},
+                    std::pair{"terrain_detail","terrainDetail"}, std::pair{"actor_interest_chunks","actorInterestChunks"}};
+    auto migrated = migrateKeys({{"entityRange",96},{"block_entity_range",128},{"terrainDetail","vanilla"}},aliases);
+    assert(migrated == nlohmann::json({{"entity_range",96},{"block_entity_range",128},{"terrain_detail","vanilla"}}));
+    assert(migrateKeys({{"actorInterestChunks",1}},aliases) == nlohmann::json({{"actor_interest_chunks",1}}));
+    for (auto [key,old] : aliases) {
+        bool rejected = false;
+        try { (void)migrateKeys(nlohmann::json{{key,128},{old,128}},aliases); }
+        catch (std::invalid_argument const& error) { rejected = std::string(error.what()).find("both") != std::string::npos; }
+        assert(rejected);
+    }
     // All files are confined to this test's ignored build subdirectory.
     auto file = std::filesystem::current_path() / "build" / "checks" / "config.json";
     writeJson(file,{{"range",128}});

@@ -1,4 +1,4 @@
-# UtilityRenderDistanceExpansion 0.1.3
+# UtilityRenderDistanceExpansion 0.1.4
 
 Windows x64 mod for Bedrock **1.26.51.01 / LeviLamina 26.51.9**. Independent
 server actor-interest expansion and client entity/block-entity collection, plus
@@ -9,22 +9,22 @@ view-distance, tick-distance, chunk-publishing or chunk-loading changes.
 
 | Side / command root | Key | Default | Allowed |
 |---|---|---|---|
-| Server `/urde` (operator/console) | `actorInterestChunks` | `8` chunks | whole `1..32` or `vanilla` |
-| Client-local `/urdec` | `entityRange` | `128` blocks | positive, finite `<=512` or `vanilla` |
-| Client-local `/urdec` | `blockEntityRange` | `128` blocks | positive, finite `<=512` or `vanilla` |
-| Client-local `/urdec` | `terrainDetail` | `128` blocks | positive, finite `<=512` or `vanilla` |
+| Server `/urde` (operator/console) | `actor_interest_chunks` | `8` chunks | whole `1..32` or `vanilla` |
+| Client-local `/urdec` | `entity_range` | `128` blocks | positive, finite `<=512` or `vanilla` |
+| Client-local `/urdec` | `block_entity_range` | `128` blocks | positive, finite `<=512` or `vanilla` |
+| Client-local `/urdec` | `terrain_detail` | `128` blocks | positive, finite `<=512` or `vanilla` |
 
 Exact overload syntax (angle brackets describe required parameters, not text to type):
 
 ```text
 /urdec status
 /urdec reload
-/urdec set <entityRange|blockEntityRange|terrainDetail> <value: float>
-/urdec set <entityRange|blockEntityRange|terrainDetail> <vanilla>
+/urdec set <entity_range|block_entity_range|terrain_detail> <value: float>
+/urdec set <entity_range|block_entity_range|terrain_detail> <vanilla>
 /urde status
 /urde reload
-/urde set <actorInterestChunks> <value: int>
-/urde set <actorInterestChunks> <vanilla>
+/urde set <actor_interest_chunks> <value: int>
+/urde set <actor_interest_chunks> <vanilla>
 ```
 
 The native grey syntax hints/autocomplete expose `status|set|reload` at the root,
@@ -37,33 +37,45 @@ label; exact spacing/localized type labels depend on the chat UI. Server `/urde`
 still requires **GameDirectors** permission. Examples:
 
 ```text
-/urde set actorInterestChunks 8
-/urde set actorInterestChunks vanilla
-/urdec set entityRange 128
-/urdec set blockEntityRange 128
-/urdec set terrainDetail vanilla
+/urde set actor_interest_chunks 8
+/urde set actor_interest_chunks vanilla
+/urdec set entity_range 128
+/urdec set block_entity_range 128
+/urdec set terrain_detail vanilla
 /urdec status
 /urdec reload
 ```
 
 The client build also extends local-world/LAN-host actor replication using
-`ceil(entityRange / 16)` chunks: 128 blocks gives 8 chunks / 197 offsets.
-`entityRange=vanilla` leaves the native 57 offsets unchanged. No new setting or
+`ceil(entity_range / 16)` chunks **only when that radius is at least 5**:
+128 blocks gives 8 chunks / 197 offsets. Otherwise, including `vanilla` or
+`entity_range <=64`, the native 57 offsets (`dx²+dz² <=17`) remain unchanged.
+A small local draw range therefore never shrinks replication below vanilla;
+there is no extra margin for the collector cube corners. Dedicated `/urde`
+still permits radii1–4 as an explicit admin choice. No new setting or
 integrated-server `/urde` command is added. The shared replication hooks are native
 when joining a remote server; that server's `/urde` still caps available actors,
 independently of the client's saved configuration. A client cannot render actors
 or chunks it has not received. `/urdec status` includes the derived requested and
-last-server-tick radius plus `hostingReplicationActive` (a matching server tick in
+last-server-tick radius plus `hosting_replication_active` (a matching server tick in
 the current session generation; remains true for a paused host until lifecycle
 invalidation).
+
+Example status for a small local draw range:
+`entity_range=16 ... local_replication=vanilla (entity_range below vanilla)`.
+At128: `local_replication=8 ... local_replication_chunks(last_server_tick)=8`.
 
 `server.json` and `client.json` live in LL's mod **config directory**, resolved
 through `NativeMod::getConfigDir()`. The relevant file is created on first load.
 JSON contains exactly the keys above; use the string `"vanilla"`, not zero/null.
+Legacy camelCase keys still load as fallbacks (mixed old/new keys for different
+settings are allowed); **both spellings of the same key are rejected** with an
+explicit ambiguous-config error. Loading does not rewrite the file. The next
+successful `set`/`reload` save writes only snake_case keys.
 For example, the default client file is:
 
 ```json
-{"entityRange":128,"blockEntityRange":128,"terrainDetail":128}
+{"entity_range":128,"block_entity_range":128,"terrain_detail":128}
 ```
 
 `set` persists the whole validated candidate using temporary-file replacement,

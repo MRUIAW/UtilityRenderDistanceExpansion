@@ -39,22 +39,23 @@ struct Config {
     }
     void set(std::string const& key, std::string const& text) {
         float value = parseRange(text,MaxBlocks);
-        if (key == "entityRange") entityRange = value;
-        else if (key == "blockEntityRange") blockEntityRange = value;
-        else if (key == "terrainDetail") terrainDetail = value;
-        else throw std::invalid_argument("Keys: entityRange, blockEntityRange, terrainDetail");
+        if (key == "entity_range") entityRange = value;
+        else if (key == "block_entity_range") blockEntityRange = value;
+        else if (key == "terrain_detail") terrainDetail = value;
+        else throw std::invalid_argument("Keys: entity_range, block_entity_range, terrain_detail");
         rebuild();
     }
     nlohmann::json encode() const {
-        return {{"entityRange",encodeRange(entityRange)}, {"blockEntityRange",encodeRange(blockEntityRange)},
-                {"terrainDetail",encodeRange(terrainDetail)}};
+        return {{"entity_range",encodeRange(entityRange)}, {"block_entity_range",encodeRange(blockEntityRange)},
+                {"terrain_detail",encodeRange(terrainDetail)}};
     }
-    static Config decode(nlohmann::json const& json) {
+    static Config decode(nlohmann::json json) {
+        json = migrateKeys(std::move(json),{{"entity_range","entityRange"},{"block_entity_range","blockEntityRange"},{"terrain_detail","terrainDetail"}});
         if (!json.is_object() || json.size() != 3) throw std::invalid_argument("Expected exactly the three client range keys");
         Config result;
-        result.entityRange = readRange(json,"entityRange",MaxBlocks);
-        result.blockEntityRange = readRange(json,"blockEntityRange",MaxBlocks);
-        result.terrainDetail = readRange(json,"terrainDetail",MaxBlocks);
+        result.entityRange = readRange(json,"entity_range",MaxBlocks);
+        result.blockEntityRange = readRange(json,"block_entity_range",MaxBlocks);
+        result.terrainDetail = readRange(json,"terrain_detail",MaxBlocks);
         result.rebuild();
         result.validate();
         return result;
@@ -300,19 +301,20 @@ void tick(Level& level) {
     refreshCameras();
 }
 std::string describe(Config const& value) {
-    return "entityRange=" + rangeText(value.entityRange) + " blockEntityRange=" + rangeText(value.blockEntityRange)
-         + " terrainDetail=" + rangeText(value.terrainDetail);
+    return "entity_range=" + rangeText(value.entityRange) + " block_entity_range=" + rangeText(value.blockEntityRange)
+         + " terrain_detail=" + rangeText(value.terrainDetail);
 }
 std::string status() {
     auto active = config.active();
     return "client requested: " + describe(*config.desired()) + "; effective(last owner tick): "
          + (active && enabled && session ? describe(*active) : "native/inactive")
-         + "; last refreshed camera F=" + std::to_string(observedFar.load())
-          + " fogEnd=" + std::to_string(observedFog.load())
-          + "; localReplicationChunks(derived/requested)=" + rangeText(float(config.desired()->localReplication.actorInterestChunks))
-          + " hostingReplicationActive=" + (enabled && session && replication::active() ? "true" : "false")
-          + " localReplicationChunks(last server tick)=" + rangeText(float(replication::effectiveRadius()))
-         + "; terrainDetail experimental=true (VV/RTX glass NOT guaranteed); enabled collection ignores fog (vanilla keeps native fog limit), visual fog unchanged; "
+          + "; last_refreshed_camera_f=" + std::to_string(observedFar.load())
+           + " fog_end=" + std::to_string(observedFog.load())
+           + "; local_replication=" + rangeText(float(config.desired()->localReplication.actorInterestChunks))
+           + (config.desired()->entityRange && !config.desired()->localReplication.actorInterestChunks ? " (entity_range below vanilla)" : "")
+           + " hosting_replication_active=" + (enabled && session && replication::active() ? "true" : "false")
+           + " local_replication_chunks(last_server_tick)=" + rangeText(float(replication::effectiveRadius()))
+          + "; terrain_detail experimental=true (VV/RTX glass NOT guaranteed); enabled collection ignores fog (vanilla keeps native fog limit), visual fog unchanged; "
            "cube collection / strict 3D block-AABB predicate / integer subchunk-center terrain LOD; "
             "residency, culler and renderer gates still apply; remote server /urde still caps available actors";
 }

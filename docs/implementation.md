@@ -1,4 +1,27 @@
-# 0.1.3 implementation and acceptance
+# 0.1.4 implementation and acceptance
+
+## 0.1.4 naming and hosting floor
+
+Live 0.1.3 server help confirmed LL snake_cases enum values. Command keys,
+callbacks, status and persisted JSON now consistently use snake_case; enum
+identifiers themselves are snake_case too. `migrateKeys` normalizes each legacy
+JSON alias before strict schema validation; both spellings of one setting are
+rejected with an explicit error. Read is nonmutating on disk; the next successful
+save through the existing config store encodes only canonical names. Unknown,
+missing, invalid and failed-reload behavior is unchanged.
+
+Client-only `localReplicationChunks` returns0 (native passthrough) unless
+`ceil(entity_range/16) >=5`. The native57 offsets obey squared radius<=17;
+radius4 misses (4,1), while radius5 contains every native offset. Thus values
+<=64 blocks no longer reduce hosting updates below native; values just above64
+use radius5,128 uses8. No cube-corner margin is added. Dedicated server policy
+still accepts1–32/vanilla and does not use this floor. Status reports
+`local_replication=vanilla (entity_range below vanilla)` for small nonzero ranges.
+Pure checks cover the boundary, native57 set containment, alias migration and
+duplicate rejection. Draw scopes, typed hooks and movement update logic are unchanged.
+Both 0.1.4 release targets and pure checks passed; final build configuration is
+client. No deployment/game launch was performed. Movement research follows the
+implementation commit and is recorded outside the repository in `range-findings.md`.
 
 The [0.1.2 caller map and proof limits](block-entity-0.1.2.md) supersede the
 historical 0.1.1 chest-cause conclusion below. Local hosting is unchanged.
@@ -96,7 +119,7 @@ hard-coded byte offset is used.
 
 ## Live application and safety
 
-### 0.1.1 local hosting
+### 0.1.1 local hosting (with the 0.1.4 floor above)
 
 The client configuration embeds a prebuilt, game-pointer-free replication policy.
 The shared consumer pins an aliasing shared pointer to the **requested** immutable
