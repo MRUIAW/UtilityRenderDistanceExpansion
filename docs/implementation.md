@@ -1,4 +1,34 @@
-# 0.1.4 implementation and acceptance
+# Implementation and acceptance
+
+## 0.1.5 shape and hosting margin
+
+`entity_shape` and `replication_margin` are optional when decoding legacy client
+files and are always emitted on save. Separate hard-enum command overloads provide
+numeric margin and `circle|square` hints. Validation rejects nonfinite/negative
+margin and any range/margin combination requiring a local disk above 34 chunks.
+The local cap accommodates prior valid 512-block files with the default 16-block
+margin; dedicated configuration continues to validate against 32 chunks.
+
+For a nonvanilla range, let `R = entity_range + replication_margin`. For chunk
+offset `(x,z)`, the nearest possible chunk-center displacement from a player
+anywhere in the origin chunk has per-axis magnitude `max(16*abs(offset)-8,0)`.
+Include offsets whose combined squared displacement is `<= R^2`, then select the
+least integer disk radius containing them. The native57 fallback remains when
+the derived disk is not a superset. At `R=144`, offsets out to a disk radius of
+10 are required; that disk contains 317 offsets. Geometry and candidate validation
+are pure and checked at compile time and in `urde-checks`, including exhaustive
+offset containment over the relevant candidate lattice for representative ranges.
+
+The ordinary actor collector first performs the existing scoped native cube
+query. `square` returns its unmodified native span. For `circle`, it copies only
+actor pointers whose positions satisfy horizontal `dx*dx+dz*dz <= range*range`
+into a vector owned by the enclosing `queueRenderEntities` scope. The matched
+fetch happens once; the vector is reserved before filling and never modified after
+returning the span. The native ordinary collector consumes the span synchronously
+and copies the actor pointers before returning; the queue context outlives that
+consumer. Block-entity predicates and terrain detail are unchanged. Other actor
+selection paths, frustum/culler, residency and renderer gates remain native.
+
 
 ## 0.1.4 naming and hosting floor
 

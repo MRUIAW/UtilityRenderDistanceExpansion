@@ -5,10 +5,12 @@
 #include "range/Scope.h"
 #include "range/HookInstall.h"
 #include "range/Replication.h"
+#include "client/ClientConfig.h"
 #include "mod/UrdeMod.h"
 #include <condition_variable>
 #include <thread>
 #include <unordered_set>
+#include <vector>
 #include "ll/api/command/CommandRegistrar.h"
 #include "ll/api/event/EventBus.h"
 #include "ll/api/event/command/ClientCommandRegisterEvent.h"
@@ -29,35 +31,25 @@
 
 namespace urde::side {
 namespace {
-struct Config {
-    float entityRange = 128, blockEntityRange = 128, terrainDetail = 128;
+struct Config : client::Settings {
     replication::Range localReplication;
+    int derivedReplicationChunks = 0;
+    int derivedReplicationOffsets = 0;
     Config() { rebuild(); }
-    void rebuild() { localReplication.rebuild(localReplicationChunks(entityRange)); }
-    void validate() const {
-        for (float value : {entityRange,blockEntityRange,terrainDetail}) validateRange(value,MaxBlocks);
+    void rebuild() {
+        validate();
+        derivedReplicationChunks = requiredLocalChunks(entityRange,replicationMargin);
+        derivedReplicationOffsets = entityRange > 0 ? diskCount(derivedReplicationChunks) : 0;
+        localReplication.rebuild(localReplicationChunks(entityRange,replicationMargin));
     }
     void set(std::string const& key, std::string const& text) {
-        float value = parseRange(text,MaxBlocks);
-        if (key == "entity_range") entityRange = value;
-        else if (key == "block_entity_range") blockEntityRange = value;
-        else if (key == "terrain_detail") terrainDetail = value;
-        else throw std::invalid_argument("Keys: entity_range, block_entity_range, terrain_detail");
+        client::Settings::set(key,text);
         rebuild();
     }
-    nlohmann::json encode() const {
-        return {{"entity_range",encodeRange(entityRange)}, {"block_entity_range",encodeRange(blockEntityRange)},
-                {"terrain_detail",encodeRange(terrainDetail)}};
-    }
     static Config decode(nlohmann::json json) {
-        json = migrateKeys(std::move(json),{{"entity_range","entityRange"},{"block_entity_range","blockEntityRange"},{"terrain_detail","terrainDetail"}});
-        if (!json.is_object() || json.size() != 3) throw std::invalid_argument("Expected exactly the three client range keys");
         Config result;
-        result.entityRange = readRange(json,"entity_range",MaxBlocks);
-        result.blockEntityRange = readRange(json,"block_entity_range",MaxBlocks);
-        result.terrainDetail = readRange(json,"terrain_detail",MaxBlocks);
+        static_cast<client::Settings&>(result) = client::Settings::decode(std::move(json));
         result.rebuild();
-        result.validate();
         return result;
     }
 };
@@ -84,6 +76,7 @@ struct QueueContext {
     std::shared_ptr<Config const> snapshot;
     bool actorsFetched = false, blocksFetched = false;
     std::unordered_set<IVanillaRenderBlockActorComponent const*> components;
+    std::vector<gsl::not_null<Actor*>> filteredActors;
 };
 thread_local QueueContext* queueContext = nullptr;
 thread_local QueueContext* drawContext = nullptr;
@@ -197,8 +190,21 @@ LL_TYPE_INSTANCE_HOOK(FetchEntities, ll::memory::HookPriority::Normal, BlockSour
     if (context && validScope(*context) && context->source == source && !context->actorsFetched
         && !except && !hitbox && !display && same(box,context->nativeBox)) {
         context->actorsFetched = true;
-        if (context->snapshot->entityRange)
-            return origin(except,cube(context->position,context->snapshot->entityRange),hitbox,display);
+        if (context->snapshot->entityRange) {
+            auto actors = origin(except,cube(context->position,context->snapshot->entityRange),hitbox,display);
+            if (context->snapshot->entityShape == UrdeEntityShape::square) return actors;
+            double const r = context->snapshot->entityRange;
+            context->filteredActors.reserve(actors.size());
+            for (auto actor : actors) {
+                auto const& p = actor->getPosition();
+                double dx = double(p.x) - context->position.x;
+                double dy = double(p.y) - context->position.y;
+                double dz = double(p.z) - context->position.z;
+                if (dx*dx + dz*dz <= r*r && std::abs(dy) <= r) context->filteredActors.push_back(actor);
+            }
+            // The enclosing queue owns this vector until native span consumption ends.
+            return {context->filteredActors.data(), context->filteredActors.size()};
+        }
     }
     return origin(except,box,hitbox,display); // native span and storage lifetime retained
 }
@@ -302,20 +308,27 @@ void tick(Level& level) {
 }
 std::string describe(Config const& value) {
     return "entity_range=" + rangeText(value.entityRange) + " block_entity_range=" + rangeText(value.blockEntityRange)
-         + " terrain_detail=" + rangeText(value.terrainDetail);
+         + " terrain_detail=" + rangeText(value.terrainDetail)
+         + " entity_shape=" + std::string(value.entityShape == UrdeEntityShape::circle ? "circle" : "square")
+         + " replication_margin=" + commandNumberText(value.replicationMargin);
 }
 std::string status() {
     auto active = config.active();
-    return "client requested: " + describe(*config.desired()) + "; effective(last owner tick): "
+    auto desired = config.desired();
+    int derived = desired->localReplication.actorInterestChunks;
+    return "client requested: " + describe(*desired) + "; effective(last owner tick): "
          + (active && enabled && session ? describe(*active) : "native/inactive")
           + "; last_refreshed_camera_f=" + std::to_string(observedFar.load())
            + " fog_end=" + std::to_string(observedFog.load())
-           + "; local_replication=" + rangeText(float(config.desired()->localReplication.actorInterestChunks))
-           + (config.desired()->entityRange && !config.desired()->localReplication.actorInterestChunks ? " (entity_range below vanilla)" : "")
+           + "; local_replication=" + rangeText(float(derived))
+           + (desired->entityRange && !derived ? " (derived disk below native floor)" : "")
+           + " derived_chunks=" + std::to_string(desired->derivedReplicationChunks)
+           + " derived_offsets=" + std::to_string(desired->derivedReplicationOffsets)
            + " hosting_replication_active=" + (enabled && session && replication::active() ? "true" : "false")
-           + " local_replication_chunks(last_server_tick)=" + rangeText(float(replication::effectiveRadius()))
-          + "; terrain_detail experimental=true (VV/RTX glass NOT guaranteed); enabled collection ignores fog (vanilla keeps native fog limit), visual fog unchanged; "
-           "cube collection / strict 3D block-AABB predicate / integer subchunk-center terrain LOD; "
+             + " local_replication_offsets=" + std::to_string(derived ? desired->localReplication.offsets.size() : 57)
+            + " local_replication_chunks(last_server_tick)=" + rangeText(float(replication::effectiveRadius()))
+           + "; terrain_detail experimental=true (VV/RTX glass NOT guaranteed); enabled collection ignores fog (vanilla keeps native fog limit), visual fog unchanged; "
+            "entity shape applies to ordinary collection / strict 3D block-AABB predicate / integer subchunk-center terrain LOD; "
             "residency, culler and renderer gates still apply; remote server /urde still caps available actors";
 }
 void commands() {

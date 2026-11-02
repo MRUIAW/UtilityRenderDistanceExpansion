@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.5]
+
+- Add client `entity_shape` (`circle` by default, or `square`) with hinted commands and persistent configuration. Circle filters the matched ordinary actor collection horizontally; block entities and terrain are unchanged.
+- Add client `replication_margin` (16 blocks by default, zero allowed). Local hosting derives a chunk disk covering the full `entity_range + replication_margin` circle for any player position in a chunk, retaining the native57 floor. Default `128 + 16` uses 10 chunks / 317 offsets; local maximum is 34 chunks, while dedicated `/urde` remains capped at 32.
+- Old client configs load with both new defaults. Status exposes shape, margin, derived radius/count and native fallback. The circle margin does not cover square-mode corners.
+
 ## [0.1.4]
 
 - Standardize command keys, status fields and JSON on snake_case, matching LL's in-game enum syntax. Legacy camelCase JSON keys load as fallbacks; reject both spellings of any one setting. The next successful save writes only snake_case.

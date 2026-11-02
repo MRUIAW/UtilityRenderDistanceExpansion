@@ -2,6 +2,7 @@
 #include "range/Scope.h"
 #include "range/Config.h"
 #include "range/CommandValues.h"
+#include "client/ClientConfig.h"
 #include <cassert>
 #include <iostream>
 #include <limits>
@@ -22,26 +23,61 @@ struct CheckConfig {
 int main() {
     using namespace urde;
     assert(diskCount(8) == 197);
-    assert(localReplicationChunks(0) == 0);
-    assert(localReplicationChunks(0.01f) == 0);
-    assert(localReplicationChunks(std::numeric_limits<float>::denorm_min()) == 0);
-    assert(localReplicationChunks(16) == 0);
-    assert(localReplicationChunks(16.01f) == 0);
-    assert(localReplicationChunks(64) == 0);
-    assert(localReplicationChunks(std::nextafter(64.0f,128.0f)) == 5);
-    assert(localReplicationChunks(80) == 5);
+    assert(localReplicationChunks(0,512) == 0);
+    assert(localReplicationChunks(0.01f,0) == 0);
+    assert(localReplicationChunks(std::numeric_limits<float>::denorm_min(),0) == 0);
+    assert(localReplicationChunks(16,16) == 0);
+    assert(localReplicationChunks(64,0) == 5);
+    assert(localReplicationChunks(std::nextafter(64.0f,128.0f),0) == 5);
+    assert(localReplicationChunks(80,0) == 6);
     int nativeCount = 0;
     for (int x = -5; x <= 5; ++x) for (int z = -5; z <= 5; ++z) {
         if (x*x+z*z <= 17) { ++nativeCount; assert(x*x+z*z <= 5*5); }
     }
     assert(nativeCount == 57 && 4*4+1 > 4*4); // radius4 misses native (4,1)
-    assert(localReplicationChunks(128) == 8);
-    assert(localReplicationChunks(MaxBlocks) == MaxChunks);
+    assert(localReplicationChunks(128,0) == 9);
+    assert(localReplicationChunks(128,16) == 10);
+    assert(diskCount(10) == 317);
+    assert(localReplicationChunks(MaxBlocks,16) == MaxChunks);
+    assert(replicationFits(512,16) && !replicationFits(512,512));
+    for (float range : {16.0f,32.0f,64.0f,128.0f,144.0f,528.0f}) {
+        int r = requiredLocalChunks(range,0);
+        for (int x = 0; x <= int(std::ceil((range+8)/16)); ++x)
+            for (int z = 0; z <= int(std::ceil((range+8)/16)); ++z) {
+                double gx = std::max(16.0*x-8.0,0.0), gz = std::max(16.0*z-8.0,0.0);
+                bool required = gx*gx+gz*gz <= double(range)*range;
+                assert(!required || x*x+z*z <= r*r);
+            }
+    }
+    auto oldClient = nlohmann::json{{"entityRange",512},{"block_entity_range",128},{"terrainDetail","vanilla"}};
+    auto settings = client::Settings::decode(oldClient);
+    assert(settings.entityShape == UrdeEntityShape::circle && settings.replicationMargin == 16);
+    assert(settings.entityRange == 512 && settings.terrainDetail == 0);
+    settings.set("replication_margin","0");
+    settings.set("entity_shape","square");
+    assert(settings.encode().at("replication_margin") == 0);
+    assert(client::Settings::decode(settings.encode()).entityShape == UrdeEntityShape::square);
+    for (auto [key,value] : {std::pair{"entity_shape","sphere"}, {"replication_margin","vanilla"},
+                            {"replication_margin","nan"}, {"replication_margin","-1"}, {"replication_margin","30"}}) {
+        bool rejected = false;
+        try { auto candidate = settings; candidate.set(key,value); } catch (std::exception const&) { rejected = true; }
+        assert(rejected);
+    }
+    for (auto field : {nlohmann::json("vanilla"),nlohmann::json(-1),nlohmann::json(nullptr),nlohmann::json(1e-100)}) {
+        bool rejected = false;
+        try { auto json = settings.encode(); json["replication_margin"] = field; (void)client::Settings::decode(json); }
+        catch (std::exception const&) { rejected = true; }
+        assert(rejected);
+    }
+    bool unknownRejected = false;
+    try { auto json = oldClient; json["unexpected"] = 1; (void)client::Settings::decode(json); }
+    catch (std::exception const&) { unknownRejected = true; }
+    assert(unknownRejected);
     assert(diskCount(4) == 49);
     assert(diskCount(MaxChunks) <= (2*MaxChunks+1)*(2*MaxChunks+1));
     assert(parseRange("vanilla",MaxBlocks) == 0);
     assert(parseRange("128",MaxBlocks) == 128);
-    assert(parseRange("32",MaxChunks,true) == 32);
+    assert(parseRange("32",MaxServerChunks,true) == 32);
     assert(commandNumberText(96.0f) == "96");
     assert(commandNumberText(8) == "8");
     for (float value : {0.0000001f, 0.01f, 16.01f, 96.5f, 128.0f, MaxBlocks,
@@ -54,10 +90,10 @@ int main() {
         catch (std::exception const&) { rejected = true; }
         assert(rejected);
     }
-    for (int value : {1,8,32}) assert(parseRange(commandNumberText(value),MaxChunks,true) == value);
+    for (int value : {1,8,32}) assert(parseRange(commandNumberText(value),MaxServerChunks,true) == value);
     for (int value : {0,-1,33}) {
         bool rejected = false;
-        try { (void)parseRange(commandNumberText(value),MaxChunks,true); }
+        try { (void)parseRange(commandNumberText(value),MaxServerChunks,true); }
         catch (std::exception const&) { rejected = true; }
         assert(rejected);
     }

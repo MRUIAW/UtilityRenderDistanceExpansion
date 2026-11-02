@@ -14,17 +14,17 @@ namespace urde::side {
 namespace {
 struct Config : replication::Range {
     Config() { rebuild(8); }
-    void validate() const { validateRange(float(actorInterestChunks), MaxChunks, true); }
+    void validate() const { validateRange(float(actorInterestChunks), MaxServerChunks, true); }
     void set(std::string const& key, std::string const& value) {
         if (key != "actor_interest_chunks") throw std::invalid_argument("Key: actor_interest_chunks");
-        rebuild(int(parseRange(value, MaxChunks, true)));
+        rebuild(int(parseRange(value, MaxServerChunks, true)));
     }
     nlohmann::json encode() const { return {{"actor_interest_chunks", encodeRange(float(actorInterestChunks))}}; }
     static Config decode(nlohmann::json json) {
         json = migrateKeys(std::move(json),{{"actor_interest_chunks","actorInterestChunks"}});
         if (!json.is_object() || json.size() != 1) throw std::invalid_argument("Expected only actor_interest_chunks");
         Config result;
-        result.rebuild(int(readRange(json,"actor_interest_chunks",MaxChunks,true)));
+        result.rebuild(int(readRange(json,"actor_interest_chunks",MaxServerChunks,true)));
         return result;
     }
 };

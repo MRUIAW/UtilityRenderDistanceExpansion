@@ -1,7 +1,7 @@
 add_rules("mode.debug", "mode.release")
 
 -- Single version constant; keep tooth.json in sync.
-local urde_version = "0.1.4"
+local urde_version = "0.1.5"
 set_version(urde_version)
 
 add_repositories("levimc-repo https://github.com/LiteLDev/xmake-repo.git")
@@ -70,7 +70,7 @@ target("urde-checks")
     set_languages("c++20")
     set_toolchains("clang-cl")
     add_cxflags("/EHsc", "/utf-8", "/UNDEBUG")
-    add_includedirs("src")
+    add_includedirs("src", "src-client")
     add_packages("nlohmann_json")
     add_defines("NOMINMAX", "UNICODE")
     add_files("tests/RangeChecks.cpp", "src/range/Config.cpp")
