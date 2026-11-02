@@ -51,6 +51,19 @@ int main() {
         assert(slot == &outer);
     }
     assert(!slot);
+    // Queue and draw scopes never leak into one another, including nested
+    // unrelated/native calls and exceptions. Both remain stack-owned.
+    int* queue = &outer;
+    int* draw = nullptr;
+    try {
+        Scope clearQueue(queue,static_cast<int*>(nullptr));
+        Scope drawScope(draw,&inner);
+        assert(!queue && draw == &inner);
+        { Scope nativeDraw(draw,static_cast<int*>(nullptr)); assert(!draw); }
+        assert(draw == &inner);
+        throw 1;
+    } catch (int) {}
+    assert(queue == &outer && !draw);
     for (auto json : {nlohmann::json{{"range",0}}, nlohmann::json{{"range",-1}},
                       nlohmann::json{{"range",513}}, nlohmann::json{{"range",1e-100}},
                       nlohmann::json{{"range",nullptr}}, nlohmann::json::object()}) {

@@ -9,6 +9,8 @@
 #include <condition_variable>
 #include <thread>
 #include <unordered_set>
+#include <intrin.h>
+#include <Windows.h>
 #include "ll/api/command/CommandRegistrar.h"
 #include "ll/api/event/EventBus.h"
 #include "ll/api/event/command/ClientCommandRegisterEvent.h"
@@ -20,6 +22,7 @@
 #include "ll/api/service/TargetedBedrock.h"
 #include "ll/api/service/Bedrock.h"
 #include "mc/client/multiplayer/ClientLevel.h"
+#include "mc/client/renderer/BaseActorRenderContext.h"
 #include "mc/client/renderer/game/LevelRenderer.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/client/renderer/game/LevelRendererShadowCamera.h"
@@ -62,7 +65,7 @@ struct Config {
 ConfigStore<Config> config;
 std::atomic<bool> enabled = false, session = false;
 std::atomic<uint64_t> generation = 0;
-// Native pointers never escape the owner thread or the synchronous queue scope.
+// Native pointers never escape the owner thread or synchronous queue/draw scopes.
 // The persistent session identities are compared only on the client tick thread.
 std::atomic<Level const*> ownerLevel = nullptr;
 std::atomic<Dimension const*> ownerDimension = nullptr;
@@ -73,32 +76,60 @@ std::thread::id ownerThread;
 ll::event::ListenerPtr commandListener, tickListener, exitListener, joinListener, stopListener;
 bool installed = false;
 
-// TEMPORARY 0.1.1 diagnostics: numeric/position data only, never retain game pointers.
-// Hooks update stack-local counters; only queue completion takes the summary lock.
+// TEMPORARY diagnostics: numeric/position data only, never retain game pointers.
 enum Counter : size_t {
     Queues, FetchMatch, FetchMiss, FetchBox, FetchFlag, FetchList, FetchSource, FetchDuplicate,
     FetchAbsent, PredicateTaken, PredicateFallback, PredicatePosition, PredicateNotInList,
-    PredicateNoFetch, PredicateVanilla, PredicateInvalid, Count
+    PredicateNoFetch, PredicateVanilla, PredicateInvalid, Draws, DrawTaken, DrawFallback,
+    OutsideQueue, Unscoped, OtherCameraScope, DrawPosition, DrawNotInList, DrawNoFetch,
+    DrawVanilla, DrawInvalid, Count
 };
 struct Diagnostics {
     uint64_t counts[Count]{};
     size_t listLast = 0, listMax = 0;
-    double maxAccepted = 0;
+    double maxAccepted = 0, drawMaxAccepted = 0;
     bool mismatch = false;
     Vec3 passed{}, target{};
 };
 std::mutex diagnosticsMutex;
 Diagnostics summary;
 uint64_t diagnosticsGeneration = 0;
+bool callerSampled = false, callerPending = false;
+uintptr_t callerOffset = 0;
 std::chrono::steady_clock::time_point lastSummary{};
+void resetDiagnostics(uint64_t epoch) {
+    if (diagnosticsGeneration == epoch) return;
+    summary = {}; diagnosticsGeneration = epoch;
+    callerSampled = callerPending = false; callerOffset = 0;
+}
+void recordOutside(uint64_t epoch, void* caller, bool unscoped) {
+    if (!enabled || !session) return;
+    std::lock_guard lock(diagnosticsMutex);
+    if (!enabled || !session || epoch != generation) return;
+    resetDiagnostics(epoch);
+    ++summary.counts[OutsideQueue];
+    summary.counts[Unscoped] += unscoped;
+    if (!callerSampled) {
+        // Evidence only: never resolve a hook or select behavior using this RVA.
+        static auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        auto address = reinterpret_cast<uintptr_t>(caller);
+        MEMORY_BASIC_INFORMATION info{};
+        if (base && address >= base && VirtualQuery(caller,&info,sizeof(info))
+            && reinterpret_cast<uintptr_t>(info.AllocationBase) == base) {
+            callerOffset = address-base;
+            callerSampled = callerPending = true;
+        }
+    }
+}
 void logDiagnostics(Diagnostics const& frame, uint64_t epoch) {
     std::lock_guard lock(diagnosticsMutex);
     if (!enabled || !session || epoch != generation) return;
-    if (diagnosticsGeneration != epoch) { summary = {}; diagnosticsGeneration = epoch; }
+    resetDiagnostics(epoch);
     for (size_t i = 0; i < Count; ++i) summary.counts[i] += frame.counts[i];
-    summary.listLast = frame.listLast;
+    if (frame.counts[FetchMatch] || frame.counts[FetchMiss]) summary.listLast = frame.listLast;
     summary.listMax = std::max(summary.listMax,frame.listMax);
     summary.maxAccepted = std::max(summary.maxAccepted,frame.maxAccepted);
+    summary.drawMaxAccepted = std::max(summary.drawMaxAccepted,frame.drawMaxAccepted);
     if (!summary.mismatch && frame.mismatch) {
         summary.mismatch = true; summary.passed = frame.passed; summary.target = frame.target;
     }
@@ -115,6 +146,15 @@ void logDiagnostics(Diagnostics const& frame, uint64_t epoch) {
         c[Queues],c[FetchMatch],c[FetchMiss],c[FetchBox],c[FetchFlag],c[FetchList],c[FetchSource],c[FetchDuplicate],
         c[FetchAbsent],summary.listLast,summary.listMax,c[PredicateTaken],c[PredicateFallback],c[PredicatePosition],
         c[PredicateNotInList],c[PredicateNoFetch],c[PredicateVanilla],c[PredicateInvalid],summary.maxAccepted,sample);
+    UrdeMod::getInstance().getSelf().getLogger().info(
+        "[URDE temporary block-entity draw diagnostics] draws={} takeover={} fallback={} reasons(position={},notInList={},noFetch={},vanilla={},invalidScope={}) maxAcceptedDistance={} outsideQueue={} unscopedNative={} otherCameraScope={}",
+        c[Draws],c[DrawTaken],c[DrawFallback],c[DrawPosition],c[DrawNotInList],c[DrawNoFetch],c[DrawVanilla],c[DrawInvalid],
+        summary.drawMaxAccepted,c[OutsideQueue],c[Unscoped],c[OtherCameraScope]);
+    if (callerPending) {
+        UrdeMod::getInstance().getSelf().getLogger().info(
+            "[URDE temporary block-entity caller] outsideQueue Minecraft+0x{:x} (once per session/generation; evidence only)",callerOffset);
+        callerPending = false;
+    }
     summary = {};
 }
 struct QueueContext {
@@ -129,6 +169,7 @@ struct QueueContext {
     Diagnostics diagnostics;
 };
 thread_local QueueContext* queueContext = nullptr;
+thread_local QueueContext* drawContext = nullptr;
 thread_local bool nativeRefresh = false;
 
 bool validCamera(LevelRendererCamera& camera) {
@@ -161,14 +202,37 @@ AABB cube(Vec3 const& p, float r) {
 bool same(Vec3 const& a, Vec3 const& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 bool same(AABB const& a, AABB const& b) { return same(a.min,b.min) && same(a.max,b.max); }
 bool finite(Vec3 const& p) { return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z); }
+bool inOtherCamera(QueueContext const& context, IVanillaRenderBlockActorComponent const* component, Vec3 const& position) {
+    if (!validScope(context)) return false;
+    auto client = ll::service::getClientInstance();
+    auto* renderer = client->getLevelRenderer();
+    auto player = renderer->mLevelRendererPlayer;
+    auto shadow = renderer->mLevelRendererShadowCamera;
+    auto cloud = renderer->mLevelRendererCloudShadowCamera;
+    for (LevelRendererCamera* camera : {static_cast<LevelRendererCamera*>(player.get()),
+                                       static_cast<LevelRendererCamera*>(shadow.get()),
+                                       static_cast<LevelRendererCamera*>(cloud.get())}) {
+        if (!camera || camera == context.camera || !validCamera(*camera) || !same(position,camera->mCameraTargetPos)) continue;
+        auto contains = [component](auto const& list) {
+            return std::any_of(list.begin(),list.end(),[component](auto entry) { return entry.get() == component; });
+        };
+        if (contains(camera->mTempBlockActorList.get()) || contains(camera->mRenderComponentRenderQueue.get())
+            || contains(camera->mRenderComponentRenderAlphaQueue.get()) || contains(camera->mRenderComponentShadowQueue.get()))
+            return true;
+    }
+    return false;
+}
 
 using Queue = void (LevelRendererCamera::*)(LevelRenderPreRenderUpdateParameters const&);
+using DrawBlocks = void (LevelRendererCamera::*)(BaseActorRenderContext&, bool);
 using FetchActors = gsl::span<gsl::not_null<Actor*>> (BlockSource::*)(Actor const*, AABB const&, bool, bool);
 using FetchBlockActors = void (BlockSource::*)(AABB const&, std::vector<gsl::not_null<IVanillaRenderBlockActorComponent*>>&, bool);
 using Within = bool (VanillaBlockActor::*)(Vec3 const&) const;
 using FarDetail = void (LevelRendererCamera::*)();
 static_assert(std::is_same_v<decltype(&LevelRendererCamera::queueRenderEntities), Queue>);
 static_assert(std::is_same_v<decltype(&LevelRendererCamera::$queueRenderEntities), Queue>);
+static_assert(std::is_same_v<decltype(&LevelRendererCamera::renderBlockEntities), DrawBlocks>);
+static_assert(std::is_same_v<decltype(&LevelRendererCamera::$renderBlockEntities), DrawBlocks>);
 static_assert(std::is_same_v<decltype(static_cast<FetchActors>(&BlockSource::fetchEntities)), FetchActors>);
 static_assert(std::is_same_v<decltype(static_cast<FetchActors>(&BlockSource::$fetchEntities)), FetchActors>);
 static_assert(std::is_same_v<decltype(&BlockSource::fetchRenderBlockActorComponents), FetchBlockActors>);
@@ -188,6 +252,7 @@ LL_TYPE_INSTANCE_HOOK(FarChunks, ll::memory::HookPriority::Normal, LevelRenderer
 }
 LL_TYPE_INSTANCE_HOOK(QueueEntities, ll::memory::HookPriority::Normal, LevelRendererCamera,
     &LevelRendererCamera::$queueRenderEntities, void, LevelRenderPreRenderUpdateParameters const& parameters) {
+    Scope clearDraw(drawContext, static_cast<QueueContext*>(nullptr));
     auto snapshot = config.active();
     if (!enabled || !snapshot || !validCamera(*this)) {
         Scope clear(queueContext, static_cast<QueueContext*>(nullptr));
@@ -206,6 +271,31 @@ LL_TYPE_INSTANCE_HOOK(QueueEntities, ll::memory::HookPriority::Normal, LevelRend
     context.diagnostics.counts[Queues]++;
     if (!context.diagnostics.counts[FetchMatch] && !context.diagnostics.counts[FetchMiss])
         context.diagnostics.counts[FetchAbsent]++;
+    logDiagnostics(context.diagnostics,context.generation);
+}
+LL_TYPE_INSTANCE_HOOK(DrawBlockEntities, ll::memory::HookPriority::Normal, LevelRendererCamera,
+    &LevelRendererCamera::$renderBlockEntities, void, BaseActorRenderContext& renderContext, bool alpha) {
+    Scope clearQueue(queueContext, static_cast<QueueContext*>(nullptr));
+    Scope clearDraw(drawContext, static_cast<QueueContext*>(nullptr));
+    auto snapshot = config.active();
+    if (!enabled || !snapshot || !validCamera(*this)) return origin(renderContext,alpha);
+    auto client = ll::service::getClientInstance();
+    auto* renderer = client->getLevelRenderer();
+    // Only the active player camera's ordinary/alpha world draw is proven here.
+    // Shadow overrides, detached/offscreen cameras, UI/items and server stay native.
+    if (static_cast<LevelRendererCamera*>(renderer->mLevelRendererPlayer.get()) != this
+        || &renderContext.mClientInstance != &*client || !renderContext.mImpl.get())
+        return origin(renderContext,alpha);
+    Vec3 position = renderContext.mImpl->mCameraTargetPosition;
+    if (!finite(position)) return origin(renderContext,alpha);
+    QueueContext context{generation.load(),this,mViewRegion->get(),position,{},std::move(snapshot)};
+    context.blocksFetched = true; // membership comes from the native final draw list
+    auto const& list = alpha ? mRenderComponentRenderAlphaQueue.get() : mRenderComponentRenderQueue.get();
+    context.components.reserve(list.size());
+    for (auto component : list) context.components.insert(component.get());
+    Scope scope(drawContext,&context);
+    origin(renderContext,alpha);
+    ++context.diagnostics.counts[Draws];
     logDiagnostics(context.diagnostics,context.generation);
 }
 LL_TYPE_INSTANCE_HOOK(FetchEntities, ll::memory::HookPriority::Normal, BlockSource,
@@ -258,7 +348,8 @@ LL_TYPE_INSTANCE_HOOK(BlockWithin, ll::memory::HookPriority::Normal, VanillaBloc
     // BlockActor/complete-object address. Hook::thisFor<T> expects that RECEIVER
     // base T (see LL Hook.h), and performs the base-to-complete adjustment.
     auto* actor = thisFor<IVanillaRenderBlockActorComponent>();
-    auto* context = queueContext;
+    auto* context = drawContext ? drawContext : queueContext;
+    if (!queueContext) recordOutside(generation.load(),_ReturnAddress(),!drawContext);
     if (context) {
         auto& d = context->diagnostics;
         Counter reason = Count;
@@ -267,11 +358,11 @@ LL_TYPE_INSTANCE_HOOK(BlockWithin, ll::memory::HookPriority::Normal, VanillaBloc
         else if (!context->snapshot->blockEntityRange) reason = PredicateVanilla;
         else if (!same(position,context->position)) {
             reason = PredicatePosition;
-            if (!d.mismatch) { d.mismatch = true; d.passed = position; d.target = context->position; }
+            if (!drawContext && !d.mismatch) { d.mismatch = true; d.passed = position; d.target = context->position; }
         } else if (!context->components.contains(static_cast<IVanillaRenderBlockActorComponent*>(actor)))
             reason = PredicateNotInList;
         if (reason == Count) {
-            ++d.counts[PredicateTaken];
+            ++d.counts[drawContext ? DrawTaken : PredicateTaken];
             auto const& box = actor->getAABB(); // preserve native virtual AABB selection
             double dx = double(position.x)-std::clamp(position.x,box.min.x,box.max.x);
             double dy = double(position.y)-std::clamp(position.y,box.min.y,box.max.y);
@@ -279,11 +370,18 @@ LL_TYPE_INSTANCE_HOOK(BlockWithin, ll::memory::HookPriority::Normal, VanillaBloc
             double r = context->snapshot->blockEntityRange;
             double distanceSquared = dx*dx + dy*dy + dz*dz;
             bool accepted = distanceSquared < r*r;
-            if (accepted) d.maxAccepted = std::max(d.maxAccepted,std::sqrt(distanceSquared));
+            auto& maximum = drawContext ? d.drawMaxAccepted : d.maxAccepted;
+            if (accepted) maximum = std::max(maximum,std::sqrt(distanceSquared));
             return accepted;
         }
-        ++d.counts[PredicateFallback];
-        ++d.counts[reason];
+        ++d.counts[drawContext ? DrawFallback : PredicateFallback];
+        constexpr Counter drawReasons[]{DrawPosition,DrawNotInList,DrawNoFetch,DrawVanilla,DrawInvalid};
+        static_assert(std::size(drawReasons) == PredicateInvalid-PredicatePosition+1);
+        ++d.counts[drawContext ? drawReasons[reason-PredicatePosition] : reason];
+        // Diagnostic-only attribution: rejected call matches another owned
+        // camera's target AND native component list. Never changes fallback.
+        if (reason == PredicateNotInList || reason == PredicatePosition)
+            d.counts[OtherCameraScope] += inOtherCamera(*context,static_cast<IVanillaRenderBlockActorComponent*>(actor),position);
     }
     return origin(position); // derived overrides are not detoured
 }
@@ -377,6 +475,7 @@ bool enable() {
     if (installed) { enabled = true; return true; }
     for (auto symbol : {
         "?$queueRenderEntities@LevelRendererCamera@@QEAAXAEBULevelRenderPreRenderUpdateParameters@@@Z",
+        "?$renderBlockEntities@LevelRendererCamera@@QEAAXAEAVBaseActorRenderContext@@_N@Z",
         "?$fetchEntities@BlockSource@@QEAA?AV?$span@V?$not_null@PEAVActor@@@gsl@@$0?0@gsl@@PEBVActor@@AEBVAABB@@_N2@Z",
         "?fetchRenderBlockActorComponents@BlockSource@@QEAAXAEBVAABB@@AEAV?$vector@V?$not_null@PEAVIVanillaRenderBlockActorComponent@@@gsl@@V?$allocator@V?$not_null@PEAVIVanillaRenderBlockActorComponent@@@gsl@@@std@@@std@@_N@Z",
         "?$isWithinRenderDistance@VanillaBlockActor@@QEBA_NAEBVVec3@@@Z",
@@ -390,6 +489,9 @@ bool enable() {
     if (!installHook<BlockWithin>("VanillaBlockActor::isWithinRenderDistance")) {
         FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook(); return false;
     }
+    if (!installHook<DrawBlockEntities>("LevelRendererCamera::renderBlockEntities")) {
+        BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook(); return false;
+    }
     if (!replication::enable([]() -> std::shared_ptr<replication::Range const> {
         // Pin requested directly on the IN-PROCESS SERVER tick; client effective
         // publication remains owned exclusively by the client tick.
@@ -398,7 +500,7 @@ bool enable() {
         auto* range = &snapshot->localReplication;
         return std::shared_ptr<replication::Range const>(std::move(snapshot), range);
     })) {
-        BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
+        DrawBlockEntities::unhook(); BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
         return false;
     }
     installed = true;
@@ -442,7 +544,7 @@ bool disable() {
     for (auto const& listener : {commandListener,tickListener,exitListener,joinListener,stopListener})
         if (listener) bus.removeListener(listener);
     commandListener = tickListener = exitListener = joinListener = stopListener = nullptr;
-    BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
+    DrawBlockEntities::unhook(); BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
     installed = false;
     config.clearEffective();
     return true;

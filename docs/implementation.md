@@ -1,4 +1,7 @@
-# 0.1.1 implementation and acceptance
+# 0.1.2 implementation and acceptance
+
+The [0.1.2 caller map and proof limits](block-entity-0.1.2.md) supersede the
+historical 0.1.1 chest-cause conclusion below. Local hosting is unchanged.
 
 ## Structure
 
@@ -25,6 +28,7 @@ addresses from the investigation. There are no placeholder-by-value parameters.
 | `Replicate` | `void (ActorReplication::*)(std::vector<WeakEntityRef> const&, Level const&, ChunkSource&)` | `ActorReplication::processReplicationForPlayers` |
 | `Sorted` | `std::vector<ChunkPos> (Level::*)(std::vector<ChunkPos> const&) const` | `Level::$getSortedPositionsFromClientOffsets` |
 | `Queue` | `void (LevelRendererCamera::*)(LevelRenderPreRenderUpdateParameters const&)` | `LevelRendererCamera::$queueRenderEntities` |
+| `DrawBlocks` | `void (LevelRendererCamera::*)(BaseActorRenderContext&, bool)` | `LevelRendererCamera::$renderBlockEntities` |
 | `FetchActors` | `gsl::span<gsl::not_null<Actor*>> (BlockSource::*)(Actor const*, AABB const&, bool, bool)` | `BlockSource::$fetchEntities` (ordinary AABB overload) |
 | `FetchBlockActors` | `void (BlockSource::*)(AABB const&, std::vector<gsl::not_null<IVanillaRenderBlockActorComponent*>>&, bool)` | `BlockSource::fetchRenderBlockActorComponents` |
 | `Within` | `bool (VanillaBlockActor::*)(Vec3 const&) const` | `VanillaBlockActor::$isWithinRenderDistance` |
@@ -123,7 +127,8 @@ generation change; game pointers never enter aggregate state. Fields:
 - `maxAcceptedDistance` is the maximum strict point-to-AABB distance accepted by
   our predicate in this interval, **not proof of final rendering**.
 - `positionMismatchSample=passed=(x,y,z) target=(x,y,z)` is one sample per summary,
-  or `none`. Calls outside an active queue remain native and are not logged.
+   or `none`. In 0.1.2 outside-queue calls are counted; only the proven owned-player
+   world draw scope can take over the base predicate there. See the new caller map.
 
 Test local hosting at 128 (derived 8 / 197), vanilla, dimension/world changes and
 remote join (inactive) separately. Compare chest tests with `matched>0`,
@@ -155,7 +160,8 @@ Queue scopes pin camera, source, session generation, position and config. Actor
 fetch requires the exact native ordinary cube, source, null exception actor and
 both flags false, only once per queue. Block-component fetch additionally matches
 the native temporary output vector and true flag. The base predicate only changes
-for components in that queue's collected vector and matching camera position.
+   for components in that queue's collected vector and matching camera position;
+   0.1.2 additionally permits the equivalent guarded world draw scope described above.
 Native output/storage and every other gate are preserved.
 
 Session start/exit and dimension identity changes invalidate the client generation

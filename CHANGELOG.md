@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2]
+
+- Fix the statically proven second base block-entity range check in the world draw dispatcher: add a named, signature-asserted `LevelRendererCamera::renderBlockEntities` scope for the owned player camera's opaque/alpha final component lists and typed render-context target position.
+- Keep queue matching, special derived predicates (Beacon), native shadow/UI/item/unscoped calls and all 0.1.1 local-host replication unchanged. No dispatcher placeholder-by-value hook, address hook or patch.
+- Preserve temporary queue diagnostics; add draw takeover/fallback, outside-queue/unscoped/other-camera-match counts and a once-per-session/generation Minecraft-relative caller sample, with the same two-second summary limit.
+- Document cross-platform caller/4096 evidence and scan limits. Static gate attribution is proven; final chest visibility and runtime dispatch still require live testing.
+
 ## [0.1.1]
 
 - Share the scoped server-Level-tick/actor-replication/sorted-position lever in `src/range/Replication.*`; client local-world/LAN hosting derives its immutable disk from `ceil(entityRange/16)`, with native vanilla behavior and no new setting. Dedicated `/urde` remains independent.

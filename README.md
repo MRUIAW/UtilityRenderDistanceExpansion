@@ -1,4 +1,4 @@
-# UtilityRenderDistanceExpansion 0.1.1
+# UtilityRenderDistanceExpansion 0.1.2
 
 Windows x64 mod for Bedrock **1.26.51.01 / LeviLamina 26.51.9**. Independent
 server actor-interest expansion and client entity/block-entity collection, plus
@@ -73,11 +73,14 @@ each replication/collection cycle. No command-thread native member writes.
 - Block entities: collector cube plus strict **3D point-to-AABB distance < range**
   for collected components using the native base predicate. Special derived
   predicates remain in force (including derived code calling the changed base).
-  The reported ~70-block chest disappearance is **not yet attributed to a proven
-  gate**. 0.1.1 preserves the statically matching position/fetch guards, replaces
-  per-predicate linear membership scans with a per-queue hash set, and logs
-  `[URDE temporary block-entity diagnostics]` to LL `logs/latest.log`, at most once
-  per two seconds during active queues. See the investigation notes for fields.
+   0.1.2 also scopes the **second base predicate check at world draw time**, using
+   the owned player camera's final opaque/alpha component list and render-context
+   target position. This fixes a statically proven native 64-block gate missed by
+   the queue-only scope; final chest visibility still needs live confirmation.
+   Shadows, UI/items, unrelated cameras and unscoped calls remain native. Temporary
+   queue/draw diagnostics and one Minecraft-relative caller sample go to LL
+   `logs/latest.log`, with summaries at most once per two seconds. See the
+   [caller map and proof limits](docs/block-entity-0.1.2.md).
 - Enabled collectors ignore short fog limits; `vanilla` restores the native
   fog-limited collectors. **Visual fog is unchanged.**
 - Terrain detail: a **single experimental shared High/Low terrain LOD threshold**
