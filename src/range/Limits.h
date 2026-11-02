@@ -6,6 +6,9 @@
 namespace urde {
 inline constexpr int MaxChunks = 32;
 inline constexpr float MaxBlocks = 512;
+inline int localReplicationChunks(float blocks) {
+    return int(std::ceil(double(blocks) / 16.0)); // avoid positive float underflow; zero is vanilla
+}
 constexpr int diskCount(int radius) {
     int count = 0;
     for (int x = -radius; x <= radius; ++x)

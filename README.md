@@ -1,4 +1,4 @@
-# UtilityRenderDistanceExpansion 0.1.0
+# UtilityRenderDistanceExpansion 0.1.1
 
 Windows x64 mod for Bedrock **1.26.51.01 / LeviLamina 26.51.9**. Independent
 server actor-interest expansion and client entity/block-entity collection, plus
@@ -26,9 +26,16 @@ Each root supports `status`, `set <key> <value|vanilla>`, and `reload`:
 /urdec reload
 ```
 
-The builds are separate: the client variant does not install the server controls
-for an integrated server. A remote server does not cap the client's configuration.
-However, a client cannot render entities/chunks it has not received.
+The client build also extends local-world/LAN-host actor replication using
+`ceil(entityRange / 16)` chunks: 128 blocks gives 8 chunks / 197 offsets.
+`entityRange=vanilla` leaves the native 57 offsets unchanged. No new setting or
+integrated-server `/urde` command is added. The shared replication hooks are native
+when joining a remote server; that server's `/urde` still caps available actors,
+independently of the client's saved configuration. A client cannot render actors
+or chunks it has not received. `/urdec status` includes the derived requested and
+last-server-tick radius plus `hostingReplicationActive` (a matching server tick in
+the current session generation; remains true for a paused host until lifecycle
+invalidation).
 
 `server.json` and `client.json` live in LL's mod **config directory**, resolved
 through `NativeMod::getConfigDir()`. The relevant file is created on first load.
@@ -46,7 +53,8 @@ or persistence failure retain the old snapshot. Changes are limited to one per
 second. Status distinguishes requested from the last owner-tick effective
 snapshot; these are **policy values, not a guarantee of final visibility**.
 Menu changes are saved without dereferencing a world and apply on the next world
-tick. Server application occurs in a scoped Level tick; client application and
+tick. Replication application, including the in-process server, occurs in a scoped
+server Level tick; client collection application and
 active-camera native refresh occur on the client tick. One snapshot is pinned for
 each replication/collection cycle. No command-thread native member writes.
 
@@ -65,6 +73,11 @@ each replication/collection cycle. No command-thread native member writes.
 - Block entities: collector cube plus strict **3D point-to-AABB distance < range**
   for collected components using the native base predicate. Special derived
   predicates remain in force (including derived code calling the changed base).
+  The reported ~70-block chest disappearance is **not yet attributed to a proven
+  gate**. 0.1.1 preserves the statically matching position/fetch guards, replaces
+  per-predicate linear membership scans with a per-queue hash set, and logs
+  `[URDE temporary block-entity diagnostics]` to LL `logs/latest.log`, at most once
+  per two seconds during active queues. See the investigation notes for fields.
 - Enabled collectors ignore short fog limits; `vanilla` restores the native
   fog-limited collectors. **Visual fog is unchanged.**
 - Terrain detail: a **single experimental shared High/Low terrain LOD threshold**

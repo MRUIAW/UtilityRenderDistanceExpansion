@@ -3,6 +3,7 @@
 #include "range/Config.h"
 #include <cassert>
 #include <iostream>
+#include <limits>
 
 struct CheckConfig {
     float range = 128;
@@ -20,6 +21,13 @@ struct CheckConfig {
 int main() {
     using namespace urde;
     assert(diskCount(8) == 197);
+    assert(localReplicationChunks(0) == 0);
+    assert(localReplicationChunks(0.01f) == 1);
+    assert(localReplicationChunks(std::numeric_limits<float>::denorm_min()) == 1);
+    assert(localReplicationChunks(16) == 1);
+    assert(localReplicationChunks(16.01f) == 2);
+    assert(localReplicationChunks(128) == 8);
+    assert(localReplicationChunks(MaxBlocks) == MaxChunks);
     assert(diskCount(4) == 49);
     assert(diskCount(MaxChunks) <= (2*MaxChunks+1)*(2*MaxChunks+1));
     assert(parseRange("vanilla",MaxBlocks) == 0);

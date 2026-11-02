@@ -1,12 +1,13 @@
-# 0.1.0 implementation and acceptance
+# 0.1.1 implementation and acceptance
 
 ## Structure
 
 - `src/mod/UrdeMod.*`: LL lifecycle and config directory.
 - `src/range/`: JSON persistence, immutable requested/effective stores, validation,
   commands, stack-restoring thread-local scopes, compile-time disk/count checks.
-- `src-server/server/ServerRange.cpp`: server-only tick/replication scopes and
-  `/urde`; no client server cap or shared-vector mutation.
+- `src/range/Replication.*`: common server Level-tick/replication/sorted scopes,
+  immutable disk policy and named-symbol checks, compiled into both builds.
+- `src-server/server/ServerRange.cpp`: dedicated config and `/urde` adapter.
 - `src-client/client/ClientRange.cpp`: client-only queue, two collectors, base
   block predicate, terrain update, client ticks/session listeners and `/urdec`.
 
@@ -44,6 +45,92 @@ returns the adjusted complete `VanillaBlockActor*`. The draft's literal
 hard-coded byte offset is used.
 
 ## Live application and safety
+
+### 0.1.1 local hosting
+
+The client configuration embeds a prebuilt, game-pointer-free replication policy.
+The shared consumer pins an aliasing shared pointer to the **requested** immutable
+client snapshot on the **server Level tick**, not the client tick. This does not
+publish the client's effective render snapshot from a second owner. Policy offsets
+are prebuilt during config validation; no native offsets/members are written from
+the render/command thread. The dedicated
+adapter retains its existing `config.accept()` behavior and command schema.
+
+LL 26.51.9 `src-client/ll/api/service/TargetedBedrock.cpp` confirms that `getLevel()`
+uses `getMinecraft(false)` from the tracked `ServerInstance`, while
+`getMultiPlayerLevel()` uses client data. Requiring that exact live non-client
+Level therefore excludes remote joins; client session gating additionally excludes
+menus/transitions. Generation invalidation covers join/exit, client dimension
+identity changes, server stopping and disable. Native pointers remain stack-only.
+Status activity means a matching server owner tick in the current lifecycle
+generation, not proof that actors were sent; paused hosts retain it until lifecycle
+invalidation. Vanilla still reports hosting
+activity but leaves sorted positions native. Runtime dispatch must be live-tested.
+
+### 0.1.1 block-entity static investigation
+
+1. **Position suspect rejected for the traced path.** Education insertion
+   `0x104148e60` passes camera+`0x628` directly to virtual predicate slot `0x30`;
+   its ordinary fetch reads the same position. Historical Windows insertion
+   `0x1446959a0`, at `0x144695a10`, passes camera+`0x660` directly: header
+   `mCameraTargetPos`, not eye/render-origin position or an adjusted copy.
+2. **Collector mismatch not established.** Education queue `0x104147020` and
+   Windows queue `0x144692670` build min/max-normalized `p +/- min(72,fogEnd)`
+   with component float add/subtract, use true (Windows `mov r9b,1`), and pass the
+   exact native temporary block-component vector (Windows camera+`0xa10`). For
+   finite position/nonnegative finite fog accepted by our queue guard, this
+   matches `cube()`; there is no evidence justifying relaxed matching. The native
+   collector enumerates resident horizontal chunks; it does not itself add a
+   second 64/72 distance predicate.
+3. **Downstream remains native.** Both insertion paths next test AABB subchunk
+   visibility/culler and translated frustum, then queue the component. The traced
+   visibility helper has no independent literal distance cutoff. Education
+   `ChestRenderer` vtable render body `0x1037668d0` was inspected: chest state,
+   pairing, transforms/material/model work, but no identified second 64/72 camera
+   range test. This is not an exhaustive backend/callee proof or a live attribution.
+   No necessary symbol-less gate was proven; no new gate hook was added.
+
+**The ~70-block chest cause remains unproven; this release does not claim it is
+fixed.** The actionable change is diagnostics plus cheaper membership. The set is
+built once from the matched native fetch result and destroyed with the queue;
+predicate lookup is average O(1), instead of O(n) per call. Existing secondary-base
+adjustment, strict point-to-virtual-AABB test and special derived behavior remain.
+All IDA opens used only `ida-edu4/minecraft-edu.i64`, sequentially, saved annotations
+and called `idapro.close_database(True)` in `finally`. Evidence batches are
+`urde-011-a/b/c`, `urde-011-chest-renderer.txt` and Windows historical dumps.
+
+The installed client `bedrock_runtime_data` v26.51.1-client.12 was checked offline
+with prelink v0.8.7 against the compiled shared replication object: all four exact
+tick/processor/sorted/helper imports were generated. A negative-control object
+referencing a deliberately nonexistent name produced no such import, confirming
+this is symbol-data availability, not unconditional import fabrication. Both mod
+builds linked successfully. Runtime enable still checks all four exact symbols
+and fails closed if the actual game's symbol table differs. No game was launched
+or attached for this check.
+
+### Temporary live log marker
+
+Search LL `logs/latest.log` for the exact prefix:
+`[URDE temporary block-entity diagnostics]`.
+One summary across all cameras/threads is emitted at most once per two seconds,
+only on active queue completion. Counters reset after each summary and on session
+generation change; game pointers never enter aggregate state. Fields:
+
+- `fetch matched`, `notMatched`, `reasons(box,flag,resultList,source,duplicate)`;
+  reasons may overlap; `absent` counts queue scopes with no eligible fetch call.
+- `listSize(last,max)` after native fetch (including native unmatched fetches).
+- `predicate takeover`, `fallback`, reasons `position,notInList,noFetch,vanilla,invalidScope`.
+- `maxAcceptedDistance` is the maximum strict point-to-AABB distance accepted by
+  our predicate in this interval, **not proof of final rendering**.
+- `positionMismatchSample=passed=(x,y,z) target=(x,y,z)` is one sample per summary,
+  or `none`. Calls outside an active queue remain native and are not logged.
+
+Test local hosting at 128 (derived 8 / 197), vanilla, dimension/world changes and
+remote join (inactive) separately. Compare chest tests with `matched>0`,
+`takeover>0`, `notInList=0`, and accepted distances beyond 72. If those hold but
+chests vanish, investigate native downstream gates without assuming this is a
+predicate failure. If `absent>0` or a fallback reason dominates, inspect that path
+first. The logger is temporary and intentionally independent of client console.
 
 Commands never touch cameras/Levels. Candidates are fully validated and persisted
 before atomic requested publication; failure retains old snapshots. Bounds:

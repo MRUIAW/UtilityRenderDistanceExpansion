@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1]
+
+- Share the scoped server-Level-tick/actor-replication/sorted-position lever in `src/range/Replication.*`; client local-world/LAN hosting derives its immutable disk from `ceil(entityRange/16)`, with native vanilla behavior and no new setting. Dedicated `/urde` remains independent.
+- Show derived local replication radius and current-generation hosting activity in `/urdec status`.
+- Statically verify block-entity predicate position and collector arguments; retain matching guards rather than invent an unproven chest fix. Preserve downstream culler, frustum and renderer behavior.
+- Add temporary rate-limited LL block-entity diagnostics (fetch matching/reasons/list size, predicate takeover/fallback reasons/position sample, maximum accepted distance), and replace linear membership scans with a per-queue hash set.
+- Preserve LGPL-3.0 licensing; no deployment or game launch performed.
+
 ## [0.1.0]
 
 - Add replication-scoped server actor-interest disk (default 8 chunks / 197 offsets), preserving explicit native vanilla behavior.

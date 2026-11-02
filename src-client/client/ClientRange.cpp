@@ -4,15 +4,18 @@
 #include "range/Limits.h"
 #include "range/Scope.h"
 #include "range/HookInstall.h"
+#include "range/Replication.h"
 #include "mod/UrdeMod.h"
 #include <condition_variable>
 #include <thread>
+#include <unordered_set>
 #include "ll/api/command/CommandRegistrar.h"
 #include "ll/api/event/EventBus.h"
 #include "ll/api/event/command/ClientCommandRegisterEvent.h"
 #include "ll/api/event/client/ClientExitLevelEvent.h"
 #include "ll/api/event/client/ClientStartJoinLevelEvent.h"
 #include "ll/api/event/world/ClientLevelTickEvent.h"
+#include "ll/api/event/server/ServerStoppingEvent.h"
 #include "ll/api/memory/Hook.h"
 #include "ll/api/service/TargetedBedrock.h"
 #include "ll/api/service/Bedrock.h"
@@ -27,6 +30,9 @@ namespace urde::side {
 namespace {
 struct Config {
     float entityRange = 128, blockEntityRange = 128, terrainDetail = 128;
+    replication::Range localReplication;
+    Config() { rebuild(); }
+    void rebuild() { localReplication.rebuild(localReplicationChunks(entityRange)); }
     void validate() const {
         for (float value : {entityRange,blockEntityRange,terrainDetail}) validateRange(value,MaxBlocks);
     }
@@ -36,6 +42,7 @@ struct Config {
         else if (key == "blockEntityRange") blockEntityRange = value;
         else if (key == "terrainDetail") terrainDetail = value;
         else throw std::invalid_argument("Keys: entityRange, blockEntityRange, terrainDetail");
+        rebuild();
     }
     nlohmann::json encode() const {
         return {{"entityRange",encodeRange(entityRange)}, {"blockEntityRange",encodeRange(blockEntityRange)},
@@ -43,8 +50,11 @@ struct Config {
     }
     static Config decode(nlohmann::json const& json) {
         if (!json.is_object() || json.size() != 3) throw std::invalid_argument("Expected exactly the three client range keys");
-        Config result{readRange(json,"entityRange",MaxBlocks), readRange(json,"blockEntityRange",MaxBlocks),
-                      readRange(json,"terrainDetail",MaxBlocks)};
+        Config result;
+        result.entityRange = readRange(json,"entityRange",MaxBlocks);
+        result.blockEntityRange = readRange(json,"blockEntityRange",MaxBlocks);
+        result.terrainDetail = readRange(json,"terrainDetail",MaxBlocks);
+        result.rebuild();
         result.validate();
         return result;
     }
@@ -60,9 +70,53 @@ std::atomic<float> observedFar = 0, observedFog = 0;
 std::mutex ownerMutex;
 std::condition_variable restored;
 std::thread::id ownerThread;
-ll::event::ListenerPtr commandListener, tickListener, exitListener, joinListener;
+ll::event::ListenerPtr commandListener, tickListener, exitListener, joinListener, stopListener;
 bool installed = false;
 
+// TEMPORARY 0.1.1 diagnostics: numeric/position data only, never retain game pointers.
+// Hooks update stack-local counters; only queue completion takes the summary lock.
+enum Counter : size_t {
+    Queues, FetchMatch, FetchMiss, FetchBox, FetchFlag, FetchList, FetchSource, FetchDuplicate,
+    FetchAbsent, PredicateTaken, PredicateFallback, PredicatePosition, PredicateNotInList,
+    PredicateNoFetch, PredicateVanilla, PredicateInvalid, Count
+};
+struct Diagnostics {
+    uint64_t counts[Count]{};
+    size_t listLast = 0, listMax = 0;
+    double maxAccepted = 0;
+    bool mismatch = false;
+    Vec3 passed{}, target{};
+};
+std::mutex diagnosticsMutex;
+Diagnostics summary;
+uint64_t diagnosticsGeneration = 0;
+std::chrono::steady_clock::time_point lastSummary{};
+void logDiagnostics(Diagnostics const& frame, uint64_t epoch) {
+    std::lock_guard lock(diagnosticsMutex);
+    if (!enabled || !session || epoch != generation) return;
+    if (diagnosticsGeneration != epoch) { summary = {}; diagnosticsGeneration = epoch; }
+    for (size_t i = 0; i < Count; ++i) summary.counts[i] += frame.counts[i];
+    summary.listLast = frame.listLast;
+    summary.listMax = std::max(summary.listMax,frame.listMax);
+    summary.maxAccepted = std::max(summary.maxAccepted,frame.maxAccepted);
+    if (!summary.mismatch && frame.mismatch) {
+        summary.mismatch = true; summary.passed = frame.passed; summary.target = frame.target;
+    }
+    auto now = std::chrono::steady_clock::now();
+    if (now-lastSummary < std::chrono::seconds(2)) return;
+    lastSummary = now;
+    auto const& c = summary.counts;
+    auto sample = summary.mismatch
+        ? "passed=(" + std::to_string(summary.passed.x) + "," + std::to_string(summary.passed.y) + "," + std::to_string(summary.passed.z)
+          + ") target=(" + std::to_string(summary.target.x) + "," + std::to_string(summary.target.y) + "," + std::to_string(summary.target.z) + ")"
+        : "none";
+    UrdeMod::getInstance().getSelf().getLogger().info(
+        "[URDE temporary block-entity diagnostics] queues={} fetch matched={} notMatched={} reasons(box={},flag={},resultList={},source={},duplicate={}) absent={} listSize(last={},max={}) predicate takeover={} fallback={} reasons(position={},notInList={},noFetch={},vanilla={},invalidScope={}) maxAcceptedDistance={} positionMismatchSample={}",
+        c[Queues],c[FetchMatch],c[FetchMiss],c[FetchBox],c[FetchFlag],c[FetchList],c[FetchSource],c[FetchDuplicate],
+        c[FetchAbsent],summary.listLast,summary.listMax,c[PredicateTaken],c[PredicateFallback],c[PredicatePosition],
+        c[PredicateNotInList],c[PredicateNoFetch],c[PredicateVanilla],c[PredicateInvalid],summary.maxAccepted,sample);
+    summary = {};
+}
 struct QueueContext {
     uint64_t generation;
     LevelRendererCamera* camera;
@@ -71,6 +125,8 @@ struct QueueContext {
     AABB nativeBox;
     std::shared_ptr<Config const> snapshot;
     bool actorsFetched = false, blocksFetched = false;
+    std::unordered_set<IVanillaRenderBlockActorComponent const*> components;
+    Diagnostics diagnostics;
 };
 thread_local QueueContext* queueContext = nullptr;
 thread_local bool nativeRefresh = false;
@@ -147,6 +203,10 @@ LL_TYPE_INSTANCE_HOOK(QueueEntities, ll::memory::HookPriority::Normal, LevelRend
                          cube(position,std::min(72.0f,fog)), std::move(snapshot)};
     Scope scope(queueContext,&context);
     origin(parameters);
+    context.diagnostics.counts[Queues]++;
+    if (!context.diagnostics.counts[FetchMatch] && !context.diagnostics.counts[FetchMiss])
+        context.diagnostics.counts[FetchAbsent]++;
+    logDiagnostics(context.diagnostics,context.generation);
 }
 LL_TYPE_INSTANCE_HOOK(FetchEntities, ll::memory::HookPriority::Normal, BlockSource,
     static_cast<FetchActors>(&BlockSource::$fetchEntities), gsl::span<gsl::not_null<Actor*>>,
@@ -165,13 +225,32 @@ LL_TYPE_INSTANCE_HOOK(FetchBlockEntities, ll::memory::HookPriority::Normal, Bloc
     &BlockSource::fetchRenderBlockActorComponents, void, AABB const& box,
     std::vector<gsl::not_null<IVanillaRenderBlockActorComponent*>>& result, bool flag) {
     auto* context = queueContext;
-    if (context && validScope(*context) && context->source == this && !context->blocksFetched && flag
-        && &result == &context->camera->mTempBlockActorList.get() && same(box,context->nativeBox)) {
+    if (!context || !validScope(*context)) return origin(box,result,flag);
+    auto& d = context->diagnostics;
+    bool sourceMatch = context->source == thisFor<BlockSource>();
+    bool listMatch = &result == &context->camera->mTempBlockActorList.get();
+    bool boxMatch = same(box,context->nativeBox);
+    bool match = sourceMatch && listMatch && boxMatch && flag && !context->blocksFetched;
+    if (match) {
+        ++d.counts[FetchMatch];
+        // Mark consumed before native invocation to keep nested fetches native.
         context->blocksFetched = true;
         if (context->snapshot->blockEntityRange)
-            return origin(cube(context->position,context->snapshot->blockEntityRange),result,flag);
+            origin(cube(context->position,context->snapshot->blockEntityRange),result,flag);
+        else origin(box,result,flag);
+        context->components.reserve(result.size());
+        for (auto component : result) context->components.insert(component.get());
+    } else {
+        ++d.counts[FetchMiss];
+        d.counts[FetchBox] += !boxMatch;
+        d.counts[FetchFlag] += !flag;
+        d.counts[FetchList] += !listMatch;
+        d.counts[FetchSource] += !sourceMatch;
+        d.counts[FetchDuplicate] += context->blocksFetched;
+        origin(box,result,flag);
     }
-    origin(box,result,flag);
+    d.listLast = result.size();
+    d.listMax = std::max(d.listMax,result.size());
 }
 LL_TYPE_INSTANCE_HOOK(BlockWithin, ll::memory::HookPriority::Normal, VanillaBlockActor,
     &VanillaBlockActor::$isWithinRenderDistance, bool, Vec3 const& position) {
@@ -180,18 +259,31 @@ LL_TYPE_INSTANCE_HOOK(BlockWithin, ll::memory::HookPriority::Normal, VanillaBloc
     // base T (see LL Hook.h), and performs the base-to-complete adjustment.
     auto* actor = thisFor<IVanillaRenderBlockActorComponent>();
     auto* context = queueContext;
-    if (context && validScope(*context) && context->blocksFetched && context->snapshot->blockEntityRange
-        && same(position,context->position)) {
-        auto const& components = context->camera->mTempBlockActorList.get();
-        auto* component = static_cast<IVanillaRenderBlockActorComponent*>(actor);
-        if (std::any_of(components.begin(),components.end(),[&](auto p) { return p.get() == component; })) {
+    if (context) {
+        auto& d = context->diagnostics;
+        Counter reason = Count;
+        if (!validScope(*context)) reason = PredicateInvalid;
+        else if (!context->blocksFetched) reason = PredicateNoFetch;
+        else if (!context->snapshot->blockEntityRange) reason = PredicateVanilla;
+        else if (!same(position,context->position)) {
+            reason = PredicatePosition;
+            if (!d.mismatch) { d.mismatch = true; d.passed = position; d.target = context->position; }
+        } else if (!context->components.contains(static_cast<IVanillaRenderBlockActorComponent*>(actor)))
+            reason = PredicateNotInList;
+        if (reason == Count) {
+            ++d.counts[PredicateTaken];
             auto const& box = actor->getAABB(); // preserve native virtual AABB selection
             double dx = double(position.x)-std::clamp(position.x,box.min.x,box.max.x);
             double dy = double(position.y)-std::clamp(position.y,box.min.y,box.max.y);
             double dz = double(position.z)-std::clamp(position.z,box.min.z,box.max.z);
             double r = context->snapshot->blockEntityRange;
-            return dx*dx + dy*dy + dz*dz < r*r;
+            double distanceSquared = dx*dx + dy*dy + dz*dz;
+            bool accepted = distanceSquared < r*r;
+            if (accepted) d.maxAccepted = std::max(d.maxAccepted,std::sqrt(distanceSquared));
+            return accepted;
         }
+        ++d.counts[PredicateFallback];
+        ++d.counts[reason];
     }
     return origin(position); // derived overrides are not detoured
 }
@@ -219,11 +311,13 @@ void refreshCameras(bool nativeOnly = false) {
     }
 }
 void clearSession() {
+    // Close the cross-thread hosting provider before invalidating its scopes.
+    { std::lock_guard lock(ownerMutex); session = false; }
     ++generation;
+    replication::invalidate();
     config.clearEffective();
     ownerLevel = nullptr;
     ownerDimension = nullptr;
-    { std::lock_guard lock(ownerMutex); session = false; }
     restored.notify_all();
 }
 void tick(Level& level) {
@@ -259,10 +353,13 @@ std::string status() {
     return "client requested: " + describe(*config.desired()) + "; effective(last owner tick): "
          + (active && enabled && session ? describe(*active) : "native/inactive")
          + "; last refreshed camera F=" + std::to_string(observedFar.load())
-         + " fogEnd=" + std::to_string(observedFog.load())
+          + " fogEnd=" + std::to_string(observedFog.load())
+          + "; localReplicationChunks(derived/requested)=" + rangeText(float(config.desired()->localReplication.actorInterestChunks))
+          + " hostingReplicationActive=" + (enabled && session && replication::active() ? "true" : "false")
+          + " localReplicationChunks(last server tick)=" + rangeText(float(replication::effectiveRadius()))
          + "; terrainDetail experimental=true (VV/RTX glass NOT guaranteed); enabled collection ignores fog (vanilla keeps native fog limit), visual fog unchanged; "
            "cube collection / strict 3D block-AABB predicate / integer subchunk-center terrain LOD; "
-           "residency, culler and renderer gates still apply; no server cap";
+            "residency, culler and renderer gates still apply; remote server /urde still caps available actors";
 }
 void commands() {
     auto& command = ll::command::CommandRegistrar::getClientInstance().getOrCreateCommand(
@@ -293,6 +390,17 @@ bool enable() {
     if (!installHook<BlockWithin>("VanillaBlockActor::isWithinRenderDistance")) {
         FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook(); return false;
     }
+    if (!replication::enable([]() -> std::shared_ptr<replication::Range const> {
+        // Pin requested directly on the IN-PROCESS SERVER tick; client effective
+        // publication remains owned exclusively by the client tick.
+        if (!enabled || !session) return nullptr;
+        auto snapshot = config.desired();
+        auto* range = &snapshot->localReplication;
+        return std::shared_ptr<replication::Range const>(std::move(snapshot), range);
+    })) {
+        BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
+        return false;
+    }
     installed = true;
     ++generation;
     enabled = true;
@@ -309,12 +417,14 @@ bool enable() {
         refreshCameras(true);
         clearSession();
     });
+    stopListener = bus.emplaceListener<ll::event::ServerStoppingEvent>([](auto&) { replication::invalidate(); });
     if (ll::service::getCommandRegistry(true)) commands();
     return true;
 }
 bool disable() {
     enabled = false;
     ++generation;
+    replication::invalidate();
     if (!installed) return true;
     bool onOwner;
     { std::lock_guard lock(ownerMutex); onOwner = ownerThread == std::this_thread::get_id(); }
@@ -328,9 +438,10 @@ bool disable() {
         }
     } else if (session) { refreshCameras(); clearSession(); }
     auto& bus = ll::event::EventBus::getInstance();
-    for (auto const& listener : {commandListener,tickListener,exitListener,joinListener})
+    replication::disable();
+    for (auto const& listener : {commandListener,tickListener,exitListener,joinListener,stopListener})
         if (listener) bus.removeListener(listener);
-    commandListener = tickListener = exitListener = joinListener = nullptr;
+    commandListener = tickListener = exitListener = joinListener = stopListener = nullptr;
     BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
     installed = false;
     config.clearEffective();
