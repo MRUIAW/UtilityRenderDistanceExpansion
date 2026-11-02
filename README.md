@@ -1,4 +1,4 @@
-# UtilityRenderDistanceExpansion 0.1.2
+# UtilityRenderDistanceExpansion 0.1.3
 
 Windows x64 mod for Bedrock **1.26.51.01 / LeviLamina 26.51.9**. Independent
 server actor-interest expansion and client entity/block-entity collection, plus
@@ -14,7 +14,27 @@ view-distance, tick-distance, chunk-publishing or chunk-loading changes.
 | Client-local `/urdec` | `blockEntityRange` | `128` blocks | positive, finite `<=512` or `vanilla` |
 | Client-local `/urdec` | `terrainDetail` | `128` blocks | positive, finite `<=512` or `vanilla` |
 
-Each root supports `status`, `set <key> <value|vanilla>`, and `reload`:
+Exact overload syntax (angle brackets describe required parameters, not text to type):
+
+```text
+/urdec status
+/urdec reload
+/urdec set <entityRange|blockEntityRange|terrainDetail> <value: float>
+/urdec set <entityRange|blockEntityRange|terrainDetail> <vanilla>
+/urde status
+/urde reload
+/urde set <actorInterestChunks> <value: int>
+/urde set <actorInterestChunks> <vanilla>
+```
+
+The native grey syntax hints/autocomplete expose `status|set|reload` at the root,
+then **all** side-specific key choices before you type the key. After the key,
+the two overloads offer the numeric `value: float` (client) / `value: int` (server)
+parameter and the hinted/completable **`vanilla`** choice. These are hard enums,
+not arbitrary strings or suggestions added only after a prefix. Bedrock may show
+the alternatives as separate syntax rows rather than a combined `number|vanilla`
+label; exact spacing/localized type labels depend on the chat UI. Server `/urde`
+still requires **GameDirectors** permission. Examples:
 
 ```text
 /urde set actorInterestChunks 8
@@ -76,10 +96,9 @@ each replication/collection cycle. No command-thread native member writes.
    0.1.2 also scopes the **second base predicate check at world draw time**, using
    the owned player camera's final opaque/alpha component list and render-context
    target position. This fixes a statically proven native 64-block gate missed by
-   the queue-only scope; final chest visibility still needs live confirmation.
+   the queue-only scope; the user confirmed chests visible to 128 in 0.1.2.
    Shadows, UI/items, unrelated cameras and unscoped calls remain native. Temporary
-   queue/draw diagnostics and one Minecraft-relative caller sample go to LL
-   `logs/latest.log`, with summaries at most once per two seconds. See the
+   queue/draw diagnostics and caller sampling were **removed in 0.1.3**. See the
    [caller map and proof limits](docs/block-entity-0.1.2.md).
 - Enabled collectors ignore short fog limits; `vanilla` restores the native
   fog-limited collectors. **Visual fog is unchanged.**

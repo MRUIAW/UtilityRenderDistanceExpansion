@@ -44,7 +44,7 @@ std::string status() {
 void commands() {
     auto& command = ll::command::CommandRegistrar::getServerInstance().getOrCreateCommand(
         "urde", "URDE server actor-interest range", CommandPermissionLevel::GameDirectors);
-    registerControls(command, status,
+    registerControls<UrdeServerKey,int>(command, status,
         [](auto const& key, auto const& value) { return config.change(key,value) + status(); },
         [] { return config.reload() + status(); });
 }

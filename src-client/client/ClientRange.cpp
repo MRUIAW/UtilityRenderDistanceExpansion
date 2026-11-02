@@ -9,8 +9,6 @@
 #include <condition_variable>
 #include <thread>
 #include <unordered_set>
-#include <intrin.h>
-#include <Windows.h>
 #include "ll/api/command/CommandRegistrar.h"
 #include "ll/api/event/EventBus.h"
 #include "ll/api/event/command/ClientCommandRegisterEvent.h"
@@ -76,87 +74,6 @@ std::thread::id ownerThread;
 ll::event::ListenerPtr commandListener, tickListener, exitListener, joinListener, stopListener;
 bool installed = false;
 
-// TEMPORARY diagnostics: numeric/position data only, never retain game pointers.
-enum Counter : size_t {
-    Queues, FetchMatch, FetchMiss, FetchBox, FetchFlag, FetchList, FetchSource, FetchDuplicate,
-    FetchAbsent, PredicateTaken, PredicateFallback, PredicatePosition, PredicateNotInList,
-    PredicateNoFetch, PredicateVanilla, PredicateInvalid, Draws, DrawTaken, DrawFallback,
-    OutsideQueue, Unscoped, OtherCameraScope, DrawPosition, DrawNotInList, DrawNoFetch,
-    DrawVanilla, DrawInvalid, Count
-};
-struct Diagnostics {
-    uint64_t counts[Count]{};
-    size_t listLast = 0, listMax = 0;
-    double maxAccepted = 0, drawMaxAccepted = 0;
-    bool mismatch = false;
-    Vec3 passed{}, target{};
-};
-std::mutex diagnosticsMutex;
-Diagnostics summary;
-uint64_t diagnosticsGeneration = 0;
-bool callerSampled = false, callerPending = false;
-uintptr_t callerOffset = 0;
-std::chrono::steady_clock::time_point lastSummary{};
-void resetDiagnostics(uint64_t epoch) {
-    if (diagnosticsGeneration == epoch) return;
-    summary = {}; diagnosticsGeneration = epoch;
-    callerSampled = callerPending = false; callerOffset = 0;
-}
-void recordOutside(uint64_t epoch, void* caller, bool unscoped) {
-    if (!enabled || !session) return;
-    std::lock_guard lock(diagnosticsMutex);
-    if (!enabled || !session || epoch != generation) return;
-    resetDiagnostics(epoch);
-    ++summary.counts[OutsideQueue];
-    summary.counts[Unscoped] += unscoped;
-    if (!callerSampled) {
-        // Evidence only: never resolve a hook or select behavior using this RVA.
-        static auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-        auto address = reinterpret_cast<uintptr_t>(caller);
-        MEMORY_BASIC_INFORMATION info{};
-        if (base && address >= base && VirtualQuery(caller,&info,sizeof(info))
-            && reinterpret_cast<uintptr_t>(info.AllocationBase) == base) {
-            callerOffset = address-base;
-            callerSampled = callerPending = true;
-        }
-    }
-}
-void logDiagnostics(Diagnostics const& frame, uint64_t epoch) {
-    std::lock_guard lock(diagnosticsMutex);
-    if (!enabled || !session || epoch != generation) return;
-    resetDiagnostics(epoch);
-    for (size_t i = 0; i < Count; ++i) summary.counts[i] += frame.counts[i];
-    if (frame.counts[FetchMatch] || frame.counts[FetchMiss]) summary.listLast = frame.listLast;
-    summary.listMax = std::max(summary.listMax,frame.listMax);
-    summary.maxAccepted = std::max(summary.maxAccepted,frame.maxAccepted);
-    summary.drawMaxAccepted = std::max(summary.drawMaxAccepted,frame.drawMaxAccepted);
-    if (!summary.mismatch && frame.mismatch) {
-        summary.mismatch = true; summary.passed = frame.passed; summary.target = frame.target;
-    }
-    auto now = std::chrono::steady_clock::now();
-    if (now-lastSummary < std::chrono::seconds(2)) return;
-    lastSummary = now;
-    auto const& c = summary.counts;
-    auto sample = summary.mismatch
-        ? "passed=(" + std::to_string(summary.passed.x) + "," + std::to_string(summary.passed.y) + "," + std::to_string(summary.passed.z)
-          + ") target=(" + std::to_string(summary.target.x) + "," + std::to_string(summary.target.y) + "," + std::to_string(summary.target.z) + ")"
-        : "none";
-    UrdeMod::getInstance().getSelf().getLogger().info(
-        "[URDE temporary block-entity diagnostics] queues={} fetch matched={} notMatched={} reasons(box={},flag={},resultList={},source={},duplicate={}) absent={} listSize(last={},max={}) predicate takeover={} fallback={} reasons(position={},notInList={},noFetch={},vanilla={},invalidScope={}) maxAcceptedDistance={} positionMismatchSample={}",
-        c[Queues],c[FetchMatch],c[FetchMiss],c[FetchBox],c[FetchFlag],c[FetchList],c[FetchSource],c[FetchDuplicate],
-        c[FetchAbsent],summary.listLast,summary.listMax,c[PredicateTaken],c[PredicateFallback],c[PredicatePosition],
-        c[PredicateNotInList],c[PredicateNoFetch],c[PredicateVanilla],c[PredicateInvalid],summary.maxAccepted,sample);
-    UrdeMod::getInstance().getSelf().getLogger().info(
-        "[URDE temporary block-entity draw diagnostics] draws={} takeover={} fallback={} reasons(position={},notInList={},noFetch={},vanilla={},invalidScope={}) maxAcceptedDistance={} outsideQueue={} unscopedNative={} otherCameraScope={}",
-        c[Draws],c[DrawTaken],c[DrawFallback],c[DrawPosition],c[DrawNotInList],c[DrawNoFetch],c[DrawVanilla],c[DrawInvalid],
-        summary.drawMaxAccepted,c[OutsideQueue],c[Unscoped],c[OtherCameraScope]);
-    if (callerPending) {
-        UrdeMod::getInstance().getSelf().getLogger().info(
-            "[URDE temporary block-entity caller] outsideQueue Minecraft+0x{:x} (once per session/generation; evidence only)",callerOffset);
-        callerPending = false;
-    }
-    summary = {};
-}
 struct QueueContext {
     uint64_t generation;
     LevelRendererCamera* camera;
@@ -166,7 +83,6 @@ struct QueueContext {
     std::shared_ptr<Config const> snapshot;
     bool actorsFetched = false, blocksFetched = false;
     std::unordered_set<IVanillaRenderBlockActorComponent const*> components;
-    Diagnostics diagnostics;
 };
 thread_local QueueContext* queueContext = nullptr;
 thread_local QueueContext* drawContext = nullptr;
@@ -202,26 +118,6 @@ AABB cube(Vec3 const& p, float r) {
 bool same(Vec3 const& a, Vec3 const& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 bool same(AABB const& a, AABB const& b) { return same(a.min,b.min) && same(a.max,b.max); }
 bool finite(Vec3 const& p) { return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z); }
-bool inOtherCamera(QueueContext const& context, IVanillaRenderBlockActorComponent const* component, Vec3 const& position) {
-    if (!validScope(context)) return false;
-    auto client = ll::service::getClientInstance();
-    auto* renderer = client->getLevelRenderer();
-    auto player = renderer->mLevelRendererPlayer;
-    auto shadow = renderer->mLevelRendererShadowCamera;
-    auto cloud = renderer->mLevelRendererCloudShadowCamera;
-    for (LevelRendererCamera* camera : {static_cast<LevelRendererCamera*>(player.get()),
-                                       static_cast<LevelRendererCamera*>(shadow.get()),
-                                       static_cast<LevelRendererCamera*>(cloud.get())}) {
-        if (!camera || camera == context.camera || !validCamera(*camera) || !same(position,camera->mCameraTargetPos)) continue;
-        auto contains = [component](auto const& list) {
-            return std::any_of(list.begin(),list.end(),[component](auto entry) { return entry.get() == component; });
-        };
-        if (contains(camera->mTempBlockActorList.get()) || contains(camera->mRenderComponentRenderQueue.get())
-            || contains(camera->mRenderComponentRenderAlphaQueue.get()) || contains(camera->mRenderComponentShadowQueue.get()))
-            return true;
-    }
-    return false;
-}
 
 using Queue = void (LevelRendererCamera::*)(LevelRenderPreRenderUpdateParameters const&);
 using DrawBlocks = void (LevelRendererCamera::*)(BaseActorRenderContext&, bool);
@@ -268,10 +164,6 @@ LL_TYPE_INSTANCE_HOOK(QueueEntities, ll::memory::HookPriority::Normal, LevelRend
                          cube(position,std::min(72.0f,fog)), std::move(snapshot)};
     Scope scope(queueContext,&context);
     origin(parameters);
-    context.diagnostics.counts[Queues]++;
-    if (!context.diagnostics.counts[FetchMatch] && !context.diagnostics.counts[FetchMiss])
-        context.diagnostics.counts[FetchAbsent]++;
-    logDiagnostics(context.diagnostics,context.generation);
 }
 LL_TYPE_INSTANCE_HOOK(DrawBlockEntities, ll::memory::HookPriority::Normal, LevelRendererCamera,
     &LevelRendererCamera::$renderBlockEntities, void, BaseActorRenderContext& renderContext, bool alpha) {
@@ -295,8 +187,6 @@ LL_TYPE_INSTANCE_HOOK(DrawBlockEntities, ll::memory::HookPriority::Normal, Level
     for (auto component : list) context.components.insert(component.get());
     Scope scope(drawContext,&context);
     origin(renderContext,alpha);
-    ++context.diagnostics.counts[Draws];
-    logDiagnostics(context.diagnostics,context.generation);
 }
 LL_TYPE_INSTANCE_HOOK(FetchEntities, ll::memory::HookPriority::Normal, BlockSource,
     static_cast<FetchActors>(&BlockSource::$fetchEntities), gsl::span<gsl::not_null<Actor*>>,
@@ -316,13 +206,11 @@ LL_TYPE_INSTANCE_HOOK(FetchBlockEntities, ll::memory::HookPriority::Normal, Bloc
     std::vector<gsl::not_null<IVanillaRenderBlockActorComponent*>>& result, bool flag) {
     auto* context = queueContext;
     if (!context || !validScope(*context)) return origin(box,result,flag);
-    auto& d = context->diagnostics;
     bool sourceMatch = context->source == thisFor<BlockSource>();
     bool listMatch = &result == &context->camera->mTempBlockActorList.get();
     bool boxMatch = same(box,context->nativeBox);
     bool match = sourceMatch && listMatch && boxMatch && flag && !context->blocksFetched;
     if (match) {
-        ++d.counts[FetchMatch];
         // Mark consumed before native invocation to keep nested fetches native.
         context->blocksFetched = true;
         if (context->snapshot->blockEntityRange)
@@ -331,16 +219,8 @@ LL_TYPE_INSTANCE_HOOK(FetchBlockEntities, ll::memory::HookPriority::Normal, Bloc
         context->components.reserve(result.size());
         for (auto component : result) context->components.insert(component.get());
     } else {
-        ++d.counts[FetchMiss];
-        d.counts[FetchBox] += !boxMatch;
-        d.counts[FetchFlag] += !flag;
-        d.counts[FetchList] += !listMatch;
-        d.counts[FetchSource] += !sourceMatch;
-        d.counts[FetchDuplicate] += context->blocksFetched;
         origin(box,result,flag);
     }
-    d.listLast = result.size();
-    d.listMax = std::max(d.listMax,result.size());
 }
 LL_TYPE_INSTANCE_HOOK(BlockWithin, ll::memory::HookPriority::Normal, VanillaBlockActor,
     &VanillaBlockActor::$isWithinRenderDistance, bool, Vec3 const& position) {
@@ -349,39 +229,16 @@ LL_TYPE_INSTANCE_HOOK(BlockWithin, ll::memory::HookPriority::Normal, VanillaBloc
     // base T (see LL Hook.h), and performs the base-to-complete adjustment.
     auto* actor = thisFor<IVanillaRenderBlockActorComponent>();
     auto* context = drawContext ? drawContext : queueContext;
-    if (!queueContext) recordOutside(generation.load(),_ReturnAddress(),!drawContext);
-    if (context) {
-        auto& d = context->diagnostics;
-        Counter reason = Count;
-        if (!validScope(*context)) reason = PredicateInvalid;
-        else if (!context->blocksFetched) reason = PredicateNoFetch;
-        else if (!context->snapshot->blockEntityRange) reason = PredicateVanilla;
-        else if (!same(position,context->position)) {
-            reason = PredicatePosition;
-            if (!drawContext && !d.mismatch) { d.mismatch = true; d.passed = position; d.target = context->position; }
-        } else if (!context->components.contains(static_cast<IVanillaRenderBlockActorComponent*>(actor)))
-            reason = PredicateNotInList;
-        if (reason == Count) {
-            ++d.counts[drawContext ? DrawTaken : PredicateTaken];
-            auto const& box = actor->getAABB(); // preserve native virtual AABB selection
-            double dx = double(position.x)-std::clamp(position.x,box.min.x,box.max.x);
-            double dy = double(position.y)-std::clamp(position.y,box.min.y,box.max.y);
-            double dz = double(position.z)-std::clamp(position.z,box.min.z,box.max.z);
-            double r = context->snapshot->blockEntityRange;
-            double distanceSquared = dx*dx + dy*dy + dz*dz;
-            bool accepted = distanceSquared < r*r;
-            auto& maximum = drawContext ? d.drawMaxAccepted : d.maxAccepted;
-            if (accepted) maximum = std::max(maximum,std::sqrt(distanceSquared));
-            return accepted;
-        }
-        ++d.counts[drawContext ? DrawFallback : PredicateFallback];
-        constexpr Counter drawReasons[]{DrawPosition,DrawNotInList,DrawNoFetch,DrawVanilla,DrawInvalid};
-        static_assert(std::size(drawReasons) == PredicateInvalid-PredicatePosition+1);
-        ++d.counts[drawContext ? drawReasons[reason-PredicatePosition] : reason];
-        // Diagnostic-only attribution: rejected call matches another owned
-        // camera's target AND native component list. Never changes fallback.
-        if (reason == PredicateNotInList || reason == PredicatePosition)
-            d.counts[OtherCameraScope] += inOtherCamera(*context,static_cast<IVanillaRenderBlockActorComponent*>(actor),position);
+    if (context && validScope(*context) && context->blocksFetched && context->snapshot->blockEntityRange
+        && same(position,context->position)
+        && context->components.contains(static_cast<IVanillaRenderBlockActorComponent*>(actor))) {
+        auto const& box = actor->getAABB(); // preserve native virtual AABB selection
+        double dx = double(position.x)-std::clamp(position.x,box.min.x,box.max.x);
+        double dy = double(position.y)-std::clamp(position.y,box.min.y,box.max.y);
+        double dz = double(position.z)-std::clamp(position.z,box.min.z,box.max.z);
+        double r = context->snapshot->blockEntityRange;
+        double distanceSquared = dx*dx + dy*dy + dz*dz;
+        return distanceSquared < r*r;
     }
     return origin(position); // derived overrides are not detoured
 }
@@ -462,7 +319,7 @@ std::string status() {
 void commands() {
     auto& command = ll::command::CommandRegistrar::getClientInstance().getOrCreateCommand(
         "urdec", "URDE client-local ranges (terrain detail experimental)");
-    registerControls(command,status,
+    registerControls<UrdeClientKey,float>(command,status,
         [](auto const& key, auto const& value) { return config.change(key,value) + status(); },
         [] { return config.reload() + status(); });
 }

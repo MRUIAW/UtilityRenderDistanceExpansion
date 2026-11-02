@@ -1,7 +1,53 @@
-# 0.1.2 implementation and acceptance
+# 0.1.3 implementation and acceptance
 
 The [0.1.2 caller map and proof limits](block-entity-0.1.2.md) supersede the
 historical 0.1.1 chest-cause conclusion below. Local hosting is unchanged.
+
+The user accepted 0.1.2: chests render to 128. 0.1.3 removes the temporary
+diagnostics without changing its functional render scopes or replication.
+
+## 0.1.3 command grammar and hints
+
+The old shared `SetParams { std::string key; std::string value; }` correctly
+registered both required fields after literal `set`; the error is **the value's
+grammar**, not a missing field/overload. Installed LL26.51.9 `Overload.h`:
+`required()` selects the reflected member by name, and `addParam()` uses its
+`ParamTraits` parser/type/parse-rule. `ParamTraits.h` lines77–79 map `std::string`
+to `HardNonTerminal::Id`; float maps to `Val` and int to `Int` (lines68–75).
+Thus the registry rejects bare `96` as a numeric token where it expects an
+identifier, before our callback/validation. This explains the reported error and
+affects both callers of the shared registration. No IDA is necessary.
+
+`registerControls<UrdeClientKey,float>` / `<UrdeServerKey,int>` now register
+numeric and vanilla overloads. External-linkage parameter structs contain a hard
+key enum plus float/int, or the same key enum plus one-value `UrdeVanilla` enum.
+LL `ParamTraits<enum>` sets `Enum` and `EnumAutocompleteExpansion`, registering
+enumerator spellings through `CommandRegistrar::tryRegisterEnum` / magic_enum.
+Grammar, enum counts/spellings, two-member reflection and side/type pairings are
+compile-time asserted. See README for the exact per-side syntax and hints.
+
+Literal `status`, `set`, `reload` remain natural LL text overloads: LL26.51.9's
+[`OverloadData::addTextImpl`](https://github.com/LiteLDev/LeviLamina/blob/v26.51.9/src/ll/api/command/OverloadData.cpp)
+already registers them as enum parameters with `EnumAutocompleteExpansion`.
+No generic action enum is needed (which could allow `status <key> <value>`).
+All fixed choices are therefore present in command metadata before prefix input;
+the grey rows' exact layout/localization still requires in-game verification.
+
+Numeric callbacks use locale-independent round-trip `to_chars` text and call the
+unchanged `config.change`/`parseRange` pipeline. This avoids `to_string` rounding
+small valid floats to0; there is no six-decimal precision loss or bypass of
+finite/positive/max/integer checks. Only enum vanilla submits the sentinel text.
+One-second throttling, disk persistence before immutable publication, failed
+update retention, effective owner-thread acceptance and GameDirectors are unchanged.
+
+0.1.3 validation: server and client release builds passed with LL 26.51.9; both
+package manifests report 0.1.3 with the correct side, and final configuration is
+client. `urde-checks` passed, including numeric-command round trips, small positive
+float preservation and zero/negative/nonfinite/over-limit rejection. Compiler
+warnings were only the existing LL manual-hook `_AutoHookCount` warning. No game
+was launched/deployed, no running game process was touched, and no IDA was opened.
+In-game command execution and exact grey-row layout remain to be live-tested;
+the accepted 0.1.2 rendering/local replication behavior is intentionally retained.
 
 ## Structure
 
@@ -112,9 +158,14 @@ builds linked successfully. Runtime enable still checks all four exact symbols
 and fails closed if the actual game's symbol table differs. No game was launched
 or attached for this check.
 
-### Temporary live log marker
+### Historical temporary live log marker (removed in 0.1.3)
 
-Search LL `logs/latest.log` for the exact prefix:
+The following describes 0.1.1/0.1.2 only; **none of these logs/counters or caller
+samples are emitted in 0.1.3**. Their aggregate lock, includes used only for
+sampling, per-scope diagnostic state and `inOtherCamera` were removed. Functional
+draw/queue scopes, sets and short-circuit predicate guards are unchanged.
+
+Historical prefix in LL `logs/latest.log`:
 `[URDE temporary block-entity diagnostics]`.
 One summary across all cameras/threads is emitted at most once per two seconds,
 only on active queue completion. Counters reset after each summary and on session

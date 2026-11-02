@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.3]
+
+- Fix numeric `set` values on both sides: LL 26.51.9 maps the old reflected strings to identifier (`Id`) grammar, which rejects bare numeric tokens. Register native client float/server integer overloads plus a separate hard-enum `vanilla` overload.
+- Use side-specific hard enums for key hints/autocomplete; keep LL's enum-expanded literal `status`, `set`, `reload` hints. Preserve validation, persistence, immutable snapshots, owner-thread application and server GameDirectors permission.
+- Remove all temporary client block-entity counters/logging/caller sampling and diagnostic-only camera scans. Preserve the accepted 0.1.2 draw scope, membership sets, guards and replication; retain its historical caller-map document.
+
 ## [0.1.2]
 
 - Fix the statically proven second base block-entity range check in the world draw dispatcher: add a named, signature-asserted `LevelRendererCamera::renderBlockEntities` scope for the owned player camera's opaque/alpha final component lists and typed render-context target position.

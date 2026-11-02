@@ -1,6 +1,7 @@
 #include "range/Limits.h"
 #include "range/Scope.h"
 #include "range/Config.h"
+#include "range/CommandValues.h"
 #include <cassert>
 #include <iostream>
 #include <limits>
@@ -33,6 +34,25 @@ int main() {
     assert(parseRange("vanilla",MaxBlocks) == 0);
     assert(parseRange("128",MaxBlocks) == 128);
     assert(parseRange("32",MaxChunks,true) == 32);
+    assert(commandNumberText(96.0f) == "96");
+    assert(commandNumberText(8) == "8");
+    for (float value : {0.0000001f, 0.01f, 16.01f, 96.5f, 128.0f, MaxBlocks,
+                        std::numeric_limits<float>::min(), std::nextafter(MaxBlocks,0.0f)})
+        assert(parseRange(commandNumberText(value),MaxBlocks) == value);
+    for (float value : {0.0f, -1.0f, std::nextafter(MaxBlocks,1024.0f),
+                        std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
+        bool rejected = false;
+        try { (void)parseRange(commandNumberText(value),MaxBlocks); }
+        catch (std::exception const&) { rejected = true; }
+        assert(rejected);
+    }
+    for (int value : {1,8,32}) assert(parseRange(commandNumberText(value),MaxChunks,true) == value);
+    for (int value : {0,-1,33}) {
+        bool rejected = false;
+        try { (void)parseRange(commandNumberText(value),MaxChunks,true); }
+        catch (std::exception const&) { rejected = true; }
+        assert(rejected);
+    }
     for (auto text : {"nan","inf","-1","0","513","128oops","1e30"}) {
         bool rejected = false;
         try { (void)parseRange(text,MaxBlocks); } catch (std::exception const&) { rejected = true; }

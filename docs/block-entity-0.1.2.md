@@ -1,5 +1,11 @@
 # 0.1.2 block-entity draw gate
 
+> Historical 0.1.2 evidence: the user subsequently confirmed chests render to 128
+> (draw takeover ~950/2s, fallback/unscopedNative/otherCameraScope all 0).
+> **0.1.3 removed all temporary diagnostics described below**, including counters,
+> logging, caller sampling and diagnostic-only camera scans. The functional draw
+> scope/membership/guards and this caller map are retained unchanged.
+
 ## Proven cause and caller map
 
 The user's 0.1.1 logs establish matched fetches, no in-queue fallback and accepted
