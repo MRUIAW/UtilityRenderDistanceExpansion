@@ -165,8 +165,9 @@ xmake build
 Optional pure validation/scope checks: `xmake build urde-checks`, then
 `xmake run urde-checks` (does not load the game).
 
-Target/DLL: `UtilityRenderDistanceExpansion`. Packaging output:
-`bin/UtilityRenderDistanceExpansion/`. See [implementation notes](docs/implementation.md)
+Target/DLL: `UtilityRenderDistanceExpansion`. Packaging output, kept separate per
+`target_type`: `bin/server/UtilityRenderDistanceExpansion/` and
+`bin/client/UtilityRenderDistanceExpansion/`. See [implementation notes](docs/implementation.md)
 for hook signatures and the live acceptance checklist. Builds are not runtime
 certification; no game launch is needed to build.
 

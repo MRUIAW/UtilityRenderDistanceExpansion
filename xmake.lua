@@ -27,6 +27,18 @@ end
 target("UtilityRenderDistanceExpansion")
     add_rules("@levibuildscript/linkrule")
     add_rules("@levibuildscript/modpacker", {modVersion = urde_version})
+    -- modpacker always writes bin/<name>; keep the server and client packages apart.
+    after_build(function (target)
+        import("core.project.config")
+        local packed = path.join(os.projectdir(), "bin", target:name())
+        local dest = path.join(os.projectdir(), "bin", config.get("target_type"), target:name())
+        if os.isdir(packed) then
+            os.tryrm(dest)
+            os.mkdir(path.directory(dest))
+            os.mv(packed, dest)
+            cprint("${bright green}[urde]: ${reset}package moved to " .. dest)
+        end
+    end)
     if is_plat("windows") then
         add_defines("NOMINMAX", "UNICODE", "_HAS_CXX23=1")
         set_exceptions("none") -- To avoid conflicts with /EHa.

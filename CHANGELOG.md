@@ -2,6 +2,8 @@
 
 ## [0.1.6]
 
+- Build output is kept per side: `bin/server/UtilityRenderDistanceExpansion/` and `bin/client/UtilityRenderDistanceExpansion/`, so building one side no longer overwrites the other.
+
 - Raise defaults to 512: client `entity_range`, `block_entity_range` and `terrain_detail` 512 blocks; server `actor_interest_chunks` 32 chunks (3209 offsets). `replication_margin` stays 16, so default local hosting uses 34 chunks / 3625 offsets. Defaults apply only when no config file exists.
 
 ## [0.1.5]
