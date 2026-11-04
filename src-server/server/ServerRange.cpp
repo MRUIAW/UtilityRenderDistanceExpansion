@@ -13,7 +13,7 @@
 namespace urde::side {
 namespace {
 struct Config : replication::Range {
-    Config() { rebuild(8); }
+    Config() { rebuild(32); }
     void validate() const { validateRange(float(actorInterestChunks), MaxServerChunks, true); }
     void set(std::string const& key, std::string const& value) {
         if (key != "actor_interest_chunks") throw std::invalid_argument("Key: actor_interest_chunks");

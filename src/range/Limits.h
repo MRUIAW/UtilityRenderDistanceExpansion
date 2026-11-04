@@ -51,6 +51,8 @@ static_assert(requiredLocalChunks(32,0) == 3);
 static_assert(requiredLocalChunks(32.0001f,0) == 3);
 static_assert(localReplicationChunks(512,16) == MaxChunks);
 static_assert(replicationFits(512,16));
+static_assert(diskCount(localReplicationChunks(512,16)) == 3625); // client defaults
+static_assert(diskCount(MaxServerChunks) == 3209); // server default
 static_assert(!replicationFits(512,512));
 static_assert(MaxChunks*MaxChunks*2 < 2147483647);
 static_assert(int(MaxBlocks)*int(MaxBlocks) < 2147483647);

@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.6]
+
+- Raise defaults to 512: client `entity_range`, `block_entity_range` and `terrain_detail` 512 blocks; server `actor_interest_chunks` 32 chunks (3209 offsets). `replication_margin` stays 16, so default local hosting uses 34 chunks / 3625 offsets. Defaults apply only when no config file exists.
+
 ## [0.1.5]
 
 - Add client `entity_shape` (`circle` by default, or `square`) with hinted commands and persistent configuration. Circle filters the matched ordinary actor collection horizontally; block entities and terrain are unchanged.

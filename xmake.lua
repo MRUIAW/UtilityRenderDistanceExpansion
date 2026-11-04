@@ -1,7 +1,7 @@
 add_rules("mode.debug", "mode.release")
 
 -- Single version constant; keep tooth.json in sync.
-local urde_version = "0.1.5"
+local urde_version = "0.1.6"
 set_version(urde_version)
 
 add_repositories("levimc-repo https://github.com/LiteLDev/xmake-repo.git")

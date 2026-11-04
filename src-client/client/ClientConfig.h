@@ -9,7 +9,7 @@
 
 namespace urde::client {
 struct Settings {
-    float entityRange = 128, blockEntityRange = 128, terrainDetail = 128;
+    float entityRange = 512, blockEntityRange = 512, terrainDetail = 512;
     float replicationMargin = 16;
     UrdeEntityShape entityShape = UrdeEntityShape::circle;
 

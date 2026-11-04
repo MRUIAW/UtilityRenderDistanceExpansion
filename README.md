@@ -1,4 +1,4 @@
-# UtilityRenderDistanceExpansion 0.1.5
+# UtilityRenderDistanceExpansion 0.1.6
 
 Windows x64 mod for Bedrock **1.26.51.01 / LeviLamina 26.51.9**. Independent
 server actor-interest expansion and client entity/block-entity collection, plus
@@ -9,10 +9,10 @@ view-distance, tick-distance, chunk-publishing or chunk-loading changes.
 
 | Side / command root | Key | Default | Allowed |
 |---|---|---|---|
-| Server `/urde` (operator/console) | `actor_interest_chunks` | `8` chunks | whole `1..32` or `vanilla` |
-| Client-local `/urdec` | `entity_range` | `128` blocks | positive, finite `<=512` or `vanilla` |
-| Client-local `/urdec` | `block_entity_range` | `128` blocks | positive, finite `<=512` or `vanilla` |
-| Client-local `/urdec` | `terrain_detail` | `128` blocks | positive, finite `<=512` or `vanilla` |
+| Server `/urde` (operator/console) | `actor_interest_chunks` | `32` chunks | whole `1..32` or `vanilla` |
+| Client-local `/urdec` | `entity_range` | `512` blocks | positive, finite `<=512` or `vanilla` |
+| Client-local `/urdec` | `block_entity_range` | `512` blocks | positive, finite `<=512` or `vanilla` |
+| Client-local `/urdec` | `terrain_detail` | `512` blocks | positive, finite `<=512` or `vanilla` |
 | Client-local `/urdec` | `entity_shape` | `circle` | `circle` or `square` |
 | Client-local `/urdec` | `replication_margin` | `16` blocks | finite `0..512`, subject to the local 34-chunk disk limit |
 
@@ -59,8 +59,8 @@ player, even when the player and replicated chunk centers are at chunk edges. Fo
 offset `(x,z)`, the closest chunk-center displacement on each axis is
 `max(16*|offset|-8, 0)`. Include offsets when the squared combined displacement
 is `<= (entity_range+replication_margin)²`; the derived radius is the smallest
-integer disk containing those offsets. At `128 + 16`
-this gives **10 chunks / 317 offsets**. The disk is limited to 34 chunks; combinations
+integer disk containing those offsets. At the default `512 + 16` this gives
+**34 chunks / 3625 offsets**; at `128 + 16` it gives 10 chunks / 317 offsets. The disk is limited to 34 chunks; combinations
 exceeding that are rejected. Old files with `entity_range=512` still load with the
 16-block default. For `entity_range=vanilla` the native offsets are retained.
 
@@ -76,7 +76,7 @@ policy and other server limits remain in force.
 native), the last-server-tick radius and `hosting_replication_active` (a matching
 server tick in the current session generation; remains true for a paused host until
 lifecycle invalidation). At the defaults it includes
-`entity_shape=circle replication_margin=16 ... local_replication=10 ... derived_chunks=10 derived_offsets=317 ... local_replication_offsets=317`.
+`entity_shape=circle replication_margin=16 ... local_replication=34 ... derived_chunks=34 derived_offsets=3625 ... local_replication_offsets=3625`.
 
 `server.json` and `client.json` live in LL's mod **config directory**, resolved
 through `NativeMod::getConfigDir()`. The relevant file is created on first load.
@@ -91,7 +91,7 @@ successful `set`/`reload` save writes only snake_case keys.
 For example, the default client file is:
 
 ```json
-{"entity_range":128,"block_entity_range":128,"terrain_detail":128,"entity_shape":"circle","replication_margin":16}
+{"entity_range":512,"block_entity_range":512,"terrain_detail":512,"entity_shape":"circle","replication_margin":16}
 ```
 
 `set` persists the whole validated candidate using temporary-file replacement,
