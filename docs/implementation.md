@@ -1,6 +1,10 @@
 # Implementation and acceptance
 
-## 0.2.1 observation-only movement diagnostics
+Current movement implementation, caller map, command grammar, diagnostics and
+acceptance are documented in [0.3.0 movement notes](movement-0.3.0.md).
+The following 0.2.1/0.2.0 sections are historical and superseded there.
+
+## Historical 0.2.1 observation-only movement diagnostics
 
 Both LL26.60.2 packages expose `SpatialActorNetworkData::mEntity` as `Actor&`:
 `TypedStorage` specializes reference types directly. `SpatialActorNetworkData`
@@ -76,7 +80,7 @@ cap4 stuttery and cap10 smoother but below vanilla; cow/type/tag selection also
 reproduced cap1 stutter. Old reduction-only counters showing zero players/types/
 tags do not establish those classes bypassed the hook.
 
-Prior Windows findings mapped BDS `0x1413e7730` / client `0x141040390` to the
+Prior **26.51** Windows findings mapped BDS `0x1413e7730` / client `0x141040390` to the
 combined elapsed gate and optional, outgoing `mTicks`, and ordinary Windows client
 `max(3,mTicks)` interpolation. These support the **unproven working hypothesis**:
 post-origin capping shortens the lerp window without increasing send cadence.
@@ -107,9 +111,9 @@ sources: `src/ll/api/command/{CommandHandle,OverloadData,CommandRegistrar}.cpp`.
 `CommandRegistrar::addText` creates/reuses `ll_text_enum_name_<word>` with one
 value. `CommandHandle::registerOverload` registers each parameter vector;
 `ParamTraits<enum>` registers its reflected values with expanded autocomplete.
-Nothing in those LL paths explicitly removes reload. The Bedrock UI omission's
-root cause remains unproven without a running UI; multiple singleton text enums
-are a plausible contributor, not an established diagnosis.
+Nothing in those LL paths explicitly removes reload. Literal enums are reused,
+not created per overload. The 0.2.1 design below exposed `set` in two distinct
+enum identities; the exact UI reason for suppressing reload remains unproven.
 
 0.2.1 advertises all three root actions in one `UrdeAction` hard enum. Longer
 overloads use `UrdeSet` so only set takes key/value arguments. All set overloads

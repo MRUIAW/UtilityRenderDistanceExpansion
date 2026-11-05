@@ -2,7 +2,7 @@ includes("symbol_missing.lua")
 add_rules("mode.debug", "mode.release")
 
 -- Single version constant; keep tooth.json in sync.
-local urde_version = "0.2.1"
+local urde_version = "0.3.0"
 set_version(urde_version)
 
 add_repositories("levimc-repo https://github.com/LiteLDev/xmake-repo.git")

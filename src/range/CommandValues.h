@@ -6,19 +6,11 @@
 
 namespace urde {
 // External linkage for LL's reflected parameters and hard-enum registration.
-enum class UrdeClientKey { entity_range, block_entity_range, terrain_detail };
-enum class UrdeClientNumberKey { entity_range, block_entity_range, terrain_detail, replication_margin };
-enum class UrdeClientVanillaKey { entity_range, block_entity_range, terrain_detail, update_interval };
-enum class UrdeClientShapeKey { entity_shape };
+enum class UrdeClientKey { entity_range, block_entity_range, terrain_detail, replication_margin, update_interval, entity_shape };
 enum class UrdeEntityShape { circle, square };
-enum class UrdeServerKey { actor_interest_chunks };
-enum class UrdeServerNumberKey { actor_interest_chunks, update_interval };
+enum class UrdeServerKey { actor_interest_chunks, update_interval };
 enum class UrdeVanilla { vanilla };
-enum class UrdeIntervalKey { update_interval };
-enum class UrdePlayersKey { full_rate_players };
-enum class UrdeBoolean { true_, false_ };
 enum class UrdeAction { status, set, reload };
-enum class UrdeSet { set };
 
 // Keep the existing string-based validation/persistence path. to_chars uses a
 // locale-independent round-trip representation, unlike to_string's six decimals

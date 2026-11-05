@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.0]
+
+- Open eligible native nullopt movement gates using the last final engaged tick per stable sender/recipient ID, and cap larger engaged payloads. Preserve native faster values; vanilla disables the lever. Dedicated default 4 ticks, hosting 1; list matches select 1. Document the native-policy limit, three-step interpolation floor, and estimated packet cost (+70% at 4, about 6x at 1).
+- Bound pair state to 65,536 slots with native fallback on bucket saturation, 200-tick expiry and lifecycle clearing. Require matching server tick and RAII sendUpdate receiver scopes; remote joins remain inactive. Verify current Windows recipient eligibility, single helper call, native timestamp update and client target replacement statically.
+- Remove full_rate_players. Missing full_rate_types defaults to ["minecraft:player"]; explicit lists survive. Ignore the legacy toggle with one notice and remove it on the next save. Player path coverage remains a live test.
+- Retain native/sendUpdate diagnostics; add FINAL histograms, lever_opened/capped/full_rate and pair_overflow with atomic collection and the two-second reporting limit.
+- Share root action/key enum identities across overloads; use server int/client float, integral interval validation, hinted vanilla/shape and explicit misuse errors. Two registered server rows / three client rows; exact Bedrock hint deduplication needs live verification. Preserve GameDirectors and persistence.
+- Correct historical wording: 0.2.0 capped interpolation payload after the native elapsed gate; it did not implement a send interval. 0.2.1 was observation-only.
+
 ## [0.2.1]
 
 - Suspend all movement overrides after live testing found smaller 0.2.0 values increased stutter. Preserve settings/commands and the tested decision code; status explicitly says suspended (diagnostics only). The post-origin cap was not proven to increase packet cadence.

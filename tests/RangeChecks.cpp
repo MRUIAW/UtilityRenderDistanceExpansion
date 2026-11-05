@@ -3,6 +3,7 @@
 #include "range/Config.h"
 #include "range/CommandValues.h"
 #include "range/MovementDiagnostics.h"
+#include "range/MovementPairs.h"
 #include "client/ClientConfig.h"
 #include <cassert>
 #include <iostream>
@@ -37,62 +38,95 @@ int main() {
     counters.intervals[1][2][10].fetch_add(3);
     counters.sendCalls[0].fetch_add(2);
     counters.ticks.fetch_add(40);
+    counters.finalIntervals[0][1][3].fetch_add(4);
+    counters.leverOpened = 1; counters.leverCapped = 2;
+    counters.leverFullRate = 3; counters.pairOverflow = 4;
     counters.reset();
     assert(counters.intervals[1][2][10] == 0 && counters.sendCalls[0] == 0 && counters.ticks == 0);
+    assert(counters.finalIntervals[0][1][3] == 0 && counters.leverOpened == 0 && counters.leverCapped == 0);
+    assert(counters.leverFullRate == 0 && counters.pairOverflow == 0);
     auto policy = movement::Settings::decode({{"full_rate_types",{"minecraft:villager"}},
                                               {"full_rate_tags",{"smooth"}}},4);
-    assert(policy.updateInterval == 4 && policy.fullRatePlayers && policy.typeIds.contains("minecraft:villager"));
+    assert(policy.updateInterval == 4 && policy.typeIds.contains("minecraft:villager"));
+    assert(!policy.typeIds.contains(movement::PlayerType));
+    assert(movement::Settings::decode({},4).typeIds.contains("minecraft:player"));
+    assert(movement::Settings::decode({{"full_rate_types",nlohmann::json::array()}},4).typeIds.empty());
+    assert(movement::Settings::decode({{"full_rate_players","ignored"}},4).typeIds.contains("minecraft:player"));
+    assert(!policy.encode().contains("full_rate_players"));
+    auto defaults = movement::Settings::decode({},4);
+    assert(defaults.select([] { return std::string("minecraft:player"); },[](auto const&) { return false; }).interval == 1);
+    assert(defaults.select([] { return std::string("Minecraft:player"); },[](auto const&) { return false; }).interval == 4);
     assert(client::Settings::decode({{"entity_range",128},{"block_entity_range",128},{"terrain_detail",128}}).movement.updateInterval == 1);
-    for (uint64_t native = 0; native <= 12; ++native) {
-        for (bool player : {false,true}) for (bool listed : {false,true}) for (bool tagged : {false,true}) {
-            int queries = 0;
-            auto result = movement::decide(native,policy,true,[&] { ++queries; return player; },
-                [&]() -> std::string const& { ++queries; static std::string yes="minecraft:villager",no="minecraft:pig"; return listed ? yes : no; },
-                [&](auto const&) { ++queries; return tagged; });
-            assert(result.interval == std::min(native,uint64_t(player || listed || tagged ? 1 : 4)));
-            if (native <= 1) assert(queries == 0);
-        }
+    for (uint64_t native = 0; native <= 12; ++native) for (unsigned n = 1; n <= 10; ++n) {
+        auto result = movement::decide(native,100,99,n);
+        assert(result.interval == std::min(native,uint64_t(n)));
+        assert(result.outcome == (native > n ? movement::Outcome::capped : movement::Outcome::unchanged));
     }
-    auto noQuery = []() -> bool { assert(false); return false; };
+    for (unsigned n = 1; n <= 10; ++n) {
+        assert(movement::decide(std::nullopt,100,std::nullopt,n).interval == n);
+        assert(!movement::decide(std::nullopt,100,100,n).interval);
+        assert(!movement::decide(std::nullopt,100+n-1,100,n).interval);
+        assert(movement::decide(std::nullopt,100+n,100,n).interval == n);
+        assert(!movement::decide(std::nullopt,99,100,n).interval);
+    }
     auto noTypeQuery = []() -> std::string { assert(false); return {}; };
     auto noTagQuery = [](auto const&) -> bool { assert(false); return false; };
     policy.set("update_interval","vanilla");
-    assert(movement::decide(10,policy,true,noQuery,noTypeQuery,noTagQuery).interval == 10);
-    assert(!movement::decide(std::nullopt,policy,true,noQuery,noTypeQuery,noTagQuery).interval);
+    assert(policy.select(noTypeQuery,noTagQuery).interval == 0);
+    assert(movement::decide(10,100,std::nullopt,0).interval == 10);
+    assert(!movement::decide(std::nullopt,100,std::nullopt,0).interval);
     policy.set("update_interval","4");
-    assert(movement::decide(10,policy,false,noQuery,noTypeQuery,noTagQuery).interval == 10);
-    auto ordinary = movement::Settings::decode({{"full_rate_players",false}},4);
-    assert(movement::decide(4,ordinary,true,noQuery,noTypeQuery,noTagQuery).interval == 4);
-    for (auto text : {"0","-1","11","4.5","nan","1junk"}) {
+    policy.set("update_interval","4.0");
+    for (auto text : {"0","-1","11","4.5","nan","1junk","nonsense","1e999"}) {
         bool rejected=false;
-        try { auto copy=policy; copy.set("update_interval",text); } catch (std::exception const&) { rejected=true; }
+        try { auto copy=policy; copy.set("update_interval",text); }
+        catch (std::exception const& error) { rejected=std::string(error.what()).find("whole ticks 1..10") != std::string::npos; }
         assert(rejected);
     }
     for (auto invalid : {nlohmann::json{{"update_interval",0}}, {{"update_interval",1.5}},
-                         {{"full_rate_players","true"}}, {{"full_rate_types","minecraft:pig"}},
+                         {{"full_rate_types","minecraft:pig"}},
                          {{"full_rate_tags",{""}}}, {{"full_rate_tags",{1}}}}) {
         bool rejected=false;
         try { (void)movement::Settings::decode(invalid,4); } catch (std::exception const&) { rejected=true; }
         assert(rejected);
     }
     assert(movement::Settings::decode(policy.encode(),1).typeIds == policy.typeIds);
-    for (int cap : {1,4,10}) {
-        ordinary.set("update_interval",std::to_string(cap));
-        for (uint64_t native : {0ull,1ull,2ull,4ull,10ull,UINT64_MAX}) {
-            auto result = movement::decide(native,ordinary,true,noQuery,noTypeQuery,noTagQuery);
-            assert(result.interval == std::min(native,uint64_t(cap)));
-            assert(result.outcome == (native > uint64_t(cap) ? movement::Outcome::capped : movement::Outcome::unchanged));
+    auto classify = [&](std::string type, bool tag) {
+        return policy.select([&] { return type; },[&](auto const&) { return tag; });
+    };
+    assert(classify("minecraft:villager",false).interval == 1);
+    assert(classify("minecraft:pig",true).fullRate);
+    assert(classify("minecraft:pig",false).interval == 4);
+    movement::PairTable<1> pairs;
+    auto* pair = pairs.touch(1,2,100);
+    assert(pair && !pair->lastEngaged());
+    pair->sent(100);
+    assert(pairs.touch(1,2,101)->lastEngaged() == 100);
+    assert(!pairs.touch(2,1,101)->lastEngaged()); // ordered sender/recipient identity
+    assert(pairs.touch(3,2,101) && pairs.touch(4,2,101));
+    assert(!pairs.touch(5,2,101)); // saturation falls back, no live eviction
+    pairs.prune(299);
+    assert(pairs.size() == 4);
+    pairs.prune(301);
+    assert(pairs.size() == 0);
+    pair = pairs.touch(1,2,400); pair->sent(400);
+    assert(!pairs.touch(1,2,600)->lastEngaged()); // exact stale boundary
+    pairs.clear(); assert(pairs.size() == 0);
+    // Simulate native returning 7 only seven ticks after the last final send.
+    // Each lever-opened result resets BOTH observed final cadence and the native
+    // recipient timestamp; N=1/2/4 must not be delayed by the stale native gate.
+    for (unsigned n : {1u,2u,4u,10u}) {
+        std::optional<uint64_t> last;
+        uint64_t previous = 0;
+        for (uint64_t tick = 0; tick < 100; ++tick) {
+            auto native = !last || tick-*last >= 7 ? std::optional<uint64_t>(7) : std::nullopt;
+            auto result = movement::decide(native,tick,last,n);
+            if (result.interval) {
+                if (last) assert(tick-previous == std::min(n,7u));
+                previous = tick; last = tick;
+            }
         }
     }
-    auto classify = [&](bool player, std::string type, bool tag) {
-        return movement::decide(10,policy,true,[&] { return player; },[&] { return type; },[&](auto const&) { return tag; });
-    };
-    assert(classify(true,"minecraft:villager",true).outcome == movement::Outcome::player);
-    assert(classify(false,"minecraft:villager",true).outcome == movement::Outcome::type);
-    assert(classify(false,"minecraft:pig",true).outcome == movement::Outcome::tag);
-    assert(classify(false,"minecraft:pig",false).outcome == movement::Outcome::capped);
-    policy.set("full_rate_players","false");
-    assert(classify(true,"minecraft:pig",false).interval == 4);
     // Publication pins the complete movement policy including prebuilt type IDs.
     auto movementFile = std::filesystem::current_path()/"build"/"checks"/"movement.json";
     auto clientJson = client::Settings{}.encode();
@@ -108,6 +142,22 @@ int main() {
     assert(movementStore.desired()->movement.typeIds.contains("minecraft:pig"));
     assert(oldMovement->movement.typeIds.contains("minecraft:villager"));
     assert(oldMovement->movement.updateInterval == 4 && movementStore.accept()->movement.updateInterval == 10);
+    // Loading legacy data is nonmutating, notices once, and saving drops the key
+    // while retaining an explicitly empty type list.
+    auto legacyFile = movementFile.parent_path()/"legacy-movement.json";
+    auto legacyJson = client::Settings{}.encode();
+    legacyJson["full_rate_players"] = false;
+    legacyJson["full_rate_types"] = nlohmann::json::array();
+    writeJson(legacyFile,legacyJson);
+    int legacyNotices = 0;
+    ConfigStore<client::Settings> legacyStore;
+    legacyStore.load(legacyFile,[&] { ++legacyNotices; });
+    assert(legacyNotices == 1 && readJson(legacyFile).contains("full_rate_players"));
+    legacyStore.load(legacyFile,[&] { ++legacyNotices; });
+    assert(legacyNotices == 1 && legacyStore.desired()->movement.typeIds.empty());
+    (void)legacyStore.reload();
+    assert(!readJson(legacyFile).contains("full_rate_players"));
+    assert(readJson(legacyFile).at("full_rate_types").empty());
     assert(diskCount(8) == 197);
     assert(localReplicationChunks(0,512) == 0);
     assert(localReplicationChunks(0.01f,0) == 0);

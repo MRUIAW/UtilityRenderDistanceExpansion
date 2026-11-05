@@ -50,7 +50,7 @@ struct Settings {
         if (json.size() < 3 || json.size() > 9) throw std::invalid_argument("Expected client range keys and optional shape, margin and movement settings");
         for (auto const& [key,value] : json.items()) {
             if (key != "entity_range" && key != "block_entity_range" && key != "terrain_detail"
-                && key != "entity_shape" && key != "replication_margin" && !movement::Settings::isKey(key))
+                && key != "entity_shape" && key != "replication_margin" && !movement::Settings::isConfigKey(key))
                 throw std::invalid_argument("Unknown client config key: " + key);
         }
         Settings result;

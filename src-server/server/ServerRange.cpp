@@ -29,7 +29,7 @@ struct Config : replication::Range {
         json = migrateKeys(std::move(json),{{"actor_interest_chunks","actorInterestChunks"}});
         if (!json.is_object()) throw std::invalid_argument("Expected server config object");
         for (auto const& [key,value] : json.items())
-            if (key != "actor_interest_chunks" && !movement::Settings::isKey(key))
+            if (key != "actor_interest_chunks" && !movement::Settings::isConfigKey(key))
                 throw std::invalid_argument("Unknown server config key: " + key);
         Config result;
         result.rebuild(int(readRange(json,"actor_interest_chunks",MaxServerChunks,true)));
@@ -49,7 +49,8 @@ std::string status() {
     auto active = config.active();
     return "server requested: " + describe(*config.desired()) + "; effective(last owner tick): "
          + (active && enabled ? describe(*active) : "native/inactive")
-          + "; movement=suspended (diagnostics only); horizontal chunk disk, resident chunks only; experimental terrain=false (client only)";
+          + "; movement(last_server_tick): " + replication::effectiveMovement()
+          + "; horizontal chunk disk, resident chunks only; experimental terrain=false (client only)";
 }
 void commands() {
     auto& command = ll::command::CommandRegistrar::getServerInstance().getOrCreateCommand(
@@ -60,7 +61,12 @@ void commands() {
 }
 }
 bool load(std::filesystem::path const& dir) {
-    try { config.load(dir / "server.json"); return true; }
+    try {
+        config.load(dir / "server.json", [] {
+            UrdeMod::getInstance().getSelf().getLogger().info("Ignoring legacy full_rate_players; use full_rate_types (default minecraft:player). Next save removes the legacy key.");
+        });
+        return true;
+    }
     catch (std::exception const& error) { UrdeMod::getInstance().getSelf().getLogger().error("{}",error.what()); return false; }
 }
 bool enable() {

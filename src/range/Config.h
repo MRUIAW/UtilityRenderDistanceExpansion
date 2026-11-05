@@ -22,16 +22,25 @@ class ConfigStore {
     std::atomic<std::shared_ptr<T const>> requested;
     std::atomic<std::shared_ptr<T const>> effective;
     std::chrono::steady_clock::time_point lastChange{};
+    std::function<void()> legacyNotice;
+    mutable bool legacyReported = false;
 
     std::shared_ptr<T const> read() const {
-        return std::make_shared<T const>(T::decode(readJson(file)));
+        auto json = readJson(file);
+        auto result = std::make_shared<T const>(T::decode(json));
+        if (json.contains("full_rate_players") && !legacyReported && legacyNotice) {
+            legacyNotice();
+            legacyReported = true;
+        }
+        return result;
     }
     void persist(T const& value) { writeJson(file, value.encode()); }
 public:
     explicit ConfigStore(T initial = {}) : requested(std::make_shared<T const>(std::move(initial))) {}
-    void load(std::filesystem::path path) {
+    void load(std::filesystem::path path, std::function<void()> notice = {}) {
         std::lock_guard lock(mutex);
         file = std::move(path);
+        legacyNotice = std::move(notice);
         if (!std::filesystem::exists(file)) persist(*requested.load());
         requested.store(read());
     }

@@ -317,7 +317,7 @@ std::string status() {
     auto active = config.active();
     auto desired = config.desired();
     int derived = desired->localReplication.actorInterestChunks;
-    return "movement=suspended (diagnostics only); client requested: " + describe(*desired) + "; effective(last owner tick): "
+    return "client requested: " + describe(*desired) + "; effective(last owner tick): "
          + (active && enabled && session ? describe(*active) : "native/inactive")
           + "; last_refreshed_camera_f=" + std::to_string(observedFar.load())
            + " fog_end=" + std::to_string(observedFog.load())
@@ -342,7 +342,12 @@ void commands() {
 }
 }
 bool load(std::filesystem::path const& dir) {
-    try { config.load(dir / "client.json"); return true; }
+    try {
+        config.load(dir / "client.json", [] {
+            UrdeMod::getInstance().getSelf().getLogger().info("Ignoring legacy full_rate_players; use full_rate_types (default minecraft:player). Next save removes the legacy key.");
+        });
+        return true;
+    }
     catch (std::exception const& error) { UrdeMod::getInstance().getSelf().getLogger().error("{}",error.what()); return false; }
 }
 bool enable() {
