@@ -1,9 +1,8 @@
 includes("symbol_missing.lua")
-add_rules("symbol_missing")
 add_rules("mode.debug", "mode.release")
 
 -- Single version constant; keep tooth.json in sync.
-local urde_version = "0.1.6"
+local urde_version = "0.2.0"
 set_version(urde_version)
 
 add_repositories("levimc-repo https://github.com/LiteLDev/xmake-repo.git")
@@ -27,6 +26,7 @@ if not has_config("vs_runtime") then
 end
 
 target("UtilityRenderDistanceExpansion")
+    add_rules("symbol_missing")
     add_rules("@levibuildscript/linkrule")
     add_rules("@levibuildscript/modpacker", {modVersion = urde_version})
     -- modpacker always writes bin/<name>; keep the server and client packages apart.

@@ -22,6 +22,75 @@ struct CheckConfig {
 
 int main() {
     using namespace urde;
+    auto policy = movement::Settings::decode({{"full_rate_types",{"minecraft:villager"}},
+                                              {"full_rate_tags",{"smooth"}}},4);
+    assert(policy.updateInterval == 4 && policy.fullRatePlayers && policy.typeIds.contains("minecraft:villager"));
+    assert(client::Settings::decode({{"entity_range",128},{"block_entity_range",128},{"terrain_detail",128}}).movement.updateInterval == 1);
+    for (uint64_t native = 0; native <= 12; ++native) {
+        for (bool player : {false,true}) for (bool listed : {false,true}) for (bool tagged : {false,true}) {
+            int queries = 0;
+            auto result = movement::decide(native,policy,true,[&] { ++queries; return player; },
+                [&]() -> std::string const& { ++queries; static std::string yes="minecraft:villager",no="minecraft:pig"; return listed ? yes : no; },
+                [&](auto const&) { ++queries; return tagged; });
+            assert(result.interval == std::min(native,uint64_t(player || listed || tagged ? 1 : 4)));
+            if (native <= 1) assert(queries == 0);
+        }
+    }
+    auto noQuery = []() -> bool { assert(false); return false; };
+    auto noTypeQuery = []() -> std::string { assert(false); return {}; };
+    auto noTagQuery = [](auto const&) -> bool { assert(false); return false; };
+    policy.set("update_interval","vanilla");
+    assert(movement::decide(10,policy,true,noQuery,noTypeQuery,noTagQuery).interval == 10);
+    assert(!movement::decide(std::nullopt,policy,true,noQuery,noTypeQuery,noTagQuery).interval);
+    policy.set("update_interval","4");
+    assert(movement::decide(10,policy,false,noQuery,noTypeQuery,noTagQuery).interval == 10);
+    auto ordinary = movement::Settings::decode({{"full_rate_players",false}},4);
+    assert(movement::decide(4,ordinary,true,noQuery,noTypeQuery,noTagQuery).interval == 4);
+    for (auto text : {"0","-1","11","4.5","nan","1junk"}) {
+        bool rejected=false;
+        try { auto copy=policy; copy.set("update_interval",text); } catch (std::exception const&) { rejected=true; }
+        assert(rejected);
+    }
+    for (auto invalid : {nlohmann::json{{"update_interval",0}}, {{"update_interval",1.5}},
+                         {{"full_rate_players","true"}}, {{"full_rate_types","minecraft:pig"}},
+                         {{"full_rate_tags",{""}}}, {{"full_rate_tags",{1}}}}) {
+        bool rejected=false;
+        try { (void)movement::Settings::decode(invalid,4); } catch (std::exception const&) { rejected=true; }
+        assert(rejected);
+    }
+    assert(movement::Settings::decode(policy.encode(),1).typeIds == policy.typeIds);
+    for (int cap : {1,4,10}) {
+        ordinary.set("update_interval",std::to_string(cap));
+        for (uint64_t native : {0ull,1ull,2ull,4ull,10ull,UINT64_MAX}) {
+            auto result = movement::decide(native,ordinary,true,noQuery,noTypeQuery,noTagQuery);
+            assert(result.interval == std::min(native,uint64_t(cap)));
+            assert(result.outcome == (native > uint64_t(cap) ? movement::Outcome::capped : movement::Outcome::unchanged));
+        }
+    }
+    auto classify = [&](bool player, std::string type, bool tag) {
+        return movement::decide(10,policy,true,[&] { return player; },[&] { return type; },[&](auto const&) { return tag; });
+    };
+    assert(classify(true,"minecraft:villager",true).outcome == movement::Outcome::player);
+    assert(classify(false,"minecraft:villager",true).outcome == movement::Outcome::type);
+    assert(classify(false,"minecraft:pig",true).outcome == movement::Outcome::tag);
+    assert(classify(false,"minecraft:pig",false).outcome == movement::Outcome::capped);
+    policy.set("full_rate_players","false");
+    assert(classify(true,"minecraft:pig",false).interval == 4);
+    // Publication pins the complete movement policy including prebuilt type IDs.
+    auto movementFile = std::filesystem::current_path()/"build"/"checks"/"movement.json";
+    auto clientJson = client::Settings{}.encode();
+    clientJson.update(policy.encode());
+    writeJson(movementFile,clientJson);
+    ConfigStore<client::Settings> movementStore;
+    movementStore.load(movementFile);
+    auto oldMovement = movementStore.accept();
+    clientJson["update_interval"] = 10;
+    clientJson["full_rate_types"] = {"minecraft:pig"};
+    writeJson(movementFile,clientJson);
+    (void)movementStore.reload();
+    assert(movementStore.desired()->movement.typeIds.contains("minecraft:pig"));
+    assert(oldMovement->movement.typeIds.contains("minecraft:villager"));
+    assert(oldMovement->movement.updateInterval == 4 && movementStore.accept()->movement.updateInterval == 10);
     assert(diskCount(8) == 197);
     assert(localReplicationChunks(0,512) == 0);
     assert(localReplicationChunks(0.01f,0) == 0);
@@ -172,5 +241,5 @@ int main() {
     assert(retained && reloader.desired()->range == 128 && reloader.active()->range == 128);
     reloader.clearEffective();
     assert(!reloader.active());
-    std::cout << "Range validation, JSON/persistence/snapshot rejection, disk counts and nested/exception scopes passed\n";
+    std::cout << "Movement interval decisions/lazy queries/publication, range validation, JSON/persistence/snapshot rejection, disk counts and nested/exception scopes passed\n";
 }

@@ -1,5 +1,67 @@
 # Implementation and acceptance
 
+## 0.2.0 movement interval lever
+
+Both LL26.60.2 packages expose `SpatialActorNetworkData::mEntity` as `Actor&`:
+`TypedStorage` specializes reference types directly. `SpatialActorNetworkData`
+is nonpolymorphic, so the hook uses its direct typed receiver's `mEntity`;
+LL's `thisFor<T>()` is constrained to polymorphic receiver classes. No raw offsets,
+enclosing Actor-send scope, sender cache, or extra movement sender hook is needed.
+Education evidence at `0x105757d60` confirms the owner relationship; it is
+structural corroboration only, never a Windows ABI/address dependency.
+
+The only added native hook is:
+
+```cpp
+using Interval = std::optional<uint64> (SpatialActorNetworkData::*)(Player&) const;
+static_assert(std::is_same_v<decltype(&SpatialActorNetworkData::_getOptimizationUpdateInterval), Interval>);
+static_assert(std::is_same_v<decltype(SpatialActorNetworkData::mEntity), Actor&>);
+static_assert(!std::is_polymorphic_v<SpatialActorNetworkData>);
+```
+
+The existing signature-asserted Level/replication hooks remain. Native `origin`
+runs first. No owner access/classification occurs for absent intervals, vanilla,
+or native intervals at/below the minimum possible cap. With full-rate exceptions
+enabled this minimum is 1; without exceptions it is the general cap. In particular,
+native 2 with general cap 4 must still classify to honor a matching full-rate rule.
+Every actual result is `min(native, selected)`, including native 0; nullopt stays
+nullopt. Classification order is player, listed type, listed tag, general cap.
+The Player argument is the recipient; all classification uses the owning sender.
+
+Type hash sets are built during validated config creation/publication. The hot
+path does no set construction or tag-vector copying. Type lookup uses LL's
+`Actor::getTypeName()` reference. Tag checks call MCAPI `Actor::hasTag(string const&)`
+once per configured tag until a match: O(K * native tag-lookup cost) in the worst
+case for K configured tags. Native hasTag internals/allocation cost are not audited
+here. No per-call allocation is added by URDE's decision function.
+
+The hook requires the existing thread-local, generation-checked non-client Level
+tick scope, then verifies sender/recipient levels and nonremoved sender. That scope
+pins the complete immutable replication/movement snapshot on the server owner
+thread. Client local hosting copies movement from client.json into localReplication;
+the server tick pins the requested snapshot exactly as with radius. No matching
+server Level on remote join means passthrough. Lifecycle invalidation clears
+observed policy/counters; stack contexts clear on normal/exception/nested exits.
+Disable removes the interval hook before the Level hook. Effective hosting status
+reflects the last accepted server-tick policy, not the client-render snapshot.
+
+Temporary relaxed atomic counters classify outcomes and are drained after a
+matching server Level tick, at most once per two seconds. Native-unchanged calls
+with native 0/1 are deliberately not classified by actor kind; zero player reductions
+cannot prove hook nonparticipation. Logs are aggregate call counts, not sent packet
+counts. The fixed marker and all counters should be removed in the next version.
+
+Live acceptance (not performed by the build): verify hinted keys/true|false/vanilla,
+invalid input/reload retention, and defaults 4 server/1 hosting. Compare distant
+moving players, villagers, tagged pigs and unlisted actors at several distances;
+toggle full_rate_players, edit both lists/reload, compare cap 1/4/10/vanilla, and
+confirm faster native updates never slow. Check each diagnostics category while
+also observing native 0/1 caveats. Compare dedicated and solo/LAN hosting; remote
+join, dimension changes, leave/rejoin, pause/resume, server stop and disable must
+clear scopes/effective status and retain native client-only receive behavior.
+Observe packet cadence/bandwidth if needed; smoothing and universal player-path
+coverage remain runtime questions. No interpolation steps/teleports are altered.
+
 ## 0.1.5 shape and hosting margin
 
 `entity_shape` and `replication_margin` are optional when decoding legacy client

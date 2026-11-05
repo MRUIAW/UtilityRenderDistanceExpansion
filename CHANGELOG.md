@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.0]
+
+- Require LeviLamina 26.60.2; add shared server-side per-recipient movement interval caps through public `SpatialActorNetworkData::_getOptimizationUpdateInterval` and typed owning `mEntity` access.
+- Add `update_interval` (server 4 ticks, local hosting 1, or `vanilla`), `full_rate_players` (true), and file-configured `full_rate_types`/`full_rate_tags` (empty). Eligible exceptions select 1 tick; native faster/unavailable results are preserved. Old files load with side-specific defaults; commands expose hinted fixed choices and status shows settings/list sizes.
+- Add temporary two-second interval outcome diagnostics and pure decision/publication checks. Keep remote-joined clients inactive. Scope the existing symbol-report build rule to the mod target so pure checks can build.
+
 ## [0.1.6]
 
 - Build output is kept per side: `bin/server/UtilityRenderDistanceExpansion/` and `bin/client/UtilityRenderDistanceExpansion/`, so building one side no longer overwrites the other.

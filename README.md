@@ -1,6 +1,7 @@
-# UtilityRenderDistanceExpansion 0.1.6
+# UtilityRenderDistanceExpansion 0.2.0
 
-Windows x64 mod for Bedrock **1.26.51.01 / LeviLamina 26.51.9**. Independent
+Windows x64 mod for Bedrock **1.26.60.05 (client) / BDS 1.26.60.2**, requiring
+**LeviLamina >=26.60.2 <26.61.0**. Independent
 server actor-interest expansion and client entity/block-entity collection, plus
 one **experimental** shared terrain-detail distance. No fog, fancy-leaves,
 view-distance, tick-distance, chunk-publishing or chunk-loading changes.
@@ -15,6 +16,11 @@ view-distance, tick-distance, chunk-publishing or chunk-loading changes.
 | Client-local `/urdec` | `terrain_detail` | `512` blocks | positive, finite `<=512` or `vanilla` |
 | Client-local `/urdec` | `entity_shape` | `circle` | `circle` or `square` |
 | Client-local `/urdec` | `replication_margin` | `16` blocks | finite `0..512`, subject to the local 34-chunk disk limit |
+| Server `/urde` | `update_interval` | `4` ticks | whole `1..10` or `vanilla` |
+| Client hosting `/urdec` | `update_interval` | `1` tick | whole `1..10` or `vanilla` |
+| Both | `full_rate_players` | `true` | hinted `true` or `false` |
+| Both (file only, then reload) | `full_rate_types` | `[]` | list of exact type IDs, e.g. `minecraft:villager` |
+| Both (file only, then reload) | `full_rate_tags` | `[]` | list of exact vanilla `/tag` names |
 
 Exact overload syntax (angle brackets describe required parameters, not text to type):
 
@@ -29,6 +35,12 @@ Exact overload syntax (angle brackets describe required parameters, not text to 
 /urde reload
 /urde set <actor_interest_chunks> <value: int>
 /urde set <actor_interest_chunks> <vanilla>
+/urde set update_interval <value: int>
+/urde set update_interval vanilla
+/urde set full_rate_players <true|false>
+/urdec set update_interval <value: int>
+/urdec set update_interval vanilla
+/urdec set full_rate_players <true|false>
 ```
 
 The native grey syntax hints/autocomplete expose `status|set|reload` at the root,
@@ -80,7 +92,7 @@ lifecycle invalidation). At the defaults it includes
 
 `server.json` and `client.json` live in LL's mod **config directory**, resolved
 through `NativeMod::getConfigDir()`. The relevant file is created on first load.
-JSON requires the original three range keys, with `entity_shape` and
+Client JSON requires the original three range keys, with `entity_shape` and
 `replication_margin` optional for old files; missing new keys default to `circle`
 and `16`. Use the string `"vanilla"`, not zero/null, for the range keys. The margin
 is a number and can be zero.
@@ -91,7 +103,7 @@ successful `set`/`reload` save writes only snake_case keys.
 For example, the default client file is:
 
 ```json
-{"entity_range":512,"block_entity_range":512,"terrain_detail":512,"entity_shape":"circle","replication_margin":16}
+{"entity_range":512,"block_entity_range":512,"terrain_detail":512,"entity_shape":"circle","replication_margin":16,"update_interval":1,"full_rate_players":true,"full_rate_types":[],"full_rate_tags":[]}
 ```
 
 `set` persists the whole validated candidate using temporary-file replacement,
@@ -107,6 +119,43 @@ active-camera native refresh occur on the client tick. One snapshot is pinned fo
 each replication/collection cycle. No command-thread native member writes.
 
 ## Shapes and known limits
+
+Movement uses `min(native_interval, selected_interval)` for each native recipient
+query: players when enabled, listed type IDs, or listed vanilla entity tags select
+1 tick; all other actors select `update_interval`. It never increases an interval,
+and preserves unavailable native intervals. `update_interval=vanilla` disables
+all movement overrides, including player/type/tag rules. Full rate means at most
+one spatial update per server tick on native send attempts, not a heartbeat or
+extra simulation. It cannot fix absent replication, stopped simulation, or a
+different player packet path.
+
+Dedicated defaults are 4 ticks and full-rate players; existing server files need
+only their original `actor_interest_chunks` key. All four movement keys are
+optional in old files and get the side's defaults. Example server config:
+
+```json
+{"actor_interest_chunks":32,"update_interval":4,"full_rate_players":true,"full_rate_types":["minecraft:villager"],"full_rate_tags":["urde_full_rate"]}
+```
+
+Apply list edits with `/urde reload` or `/urdec reload`. For example,
+`/tag @e[type=minecraft:pig] add urde_full_rate` enables the listed-tag rule.
+`status` includes the interval, player toggle, and both list sizes; client status
+also reports `hosting_movement(last_server_tick)` or `native/inactive`. These
+client keys live in `client.json` and apply only in the matching in-process server
+tick while hosting. A remote-joined client cannot control its server's intervals.
+
+The hosting default of 1 assumes no external network cost for a solo local world;
+LAN guests still create network traffic. At 20 TPS, full rate is estimated at
+**0.4–0.8 KB/s per moving actor and recipient**, before transport/compression costs;
+this is not a bandwidth measurement. Many moving actors/viewers increase cost.
+
+Temporary counters produce at most one log line per two seconds during server
+ticks, marked `[URDE temporary interval diagnostics]`, with `player_full_rate`,
+`listed_type`, `listed_tag`, `capped`, `native_unchanged`, and
+`no_actor_unavailable` counts. Outcomes count hook calls, not packets. Full-rate
+outcomes mean the rule lowered a native interval; a zero player count alone does
+not prove that players bypass the hook (native 0/1 requires no classification).
+These diagnostics are scheduled for removal in the next version.
 
 - Server: horizontal chunk disk `dx*dx + dz*dz <= r*r`, no vertical cutoff.
   Radius 8 contains **197** offsets. Explicit vanilla uses the native **57**
@@ -170,6 +219,8 @@ Target/DLL: `UtilityRenderDistanceExpansion`. Packaging output, kept separate pe
 `bin/client/UtilityRenderDistanceExpansion/`. See [implementation notes](docs/implementation.md)
 for hook signatures and the live acceptance checklist. Builds are not runtime
 certification; no game launch is needed to build.
+
+The dedicated-server package belongs in `mods/UtilityRenderDistanceExpansion/`.
 
 ## License
 

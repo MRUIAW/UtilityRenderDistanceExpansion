@@ -2,6 +2,7 @@
 #include "range/CommandValues.h"
 #include "range/Config.h"
 #include "range/Limits.h"
+#include "range/Movement.h"
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -12,8 +13,10 @@ struct Settings {
     float entityRange = 512, blockEntityRange = 512, terrainDetail = 512;
     float replicationMargin = 16;
     UrdeEntityShape entityShape = UrdeEntityShape::circle;
+    movement::Settings movement{1};
 
     void validate() const {
+        movement.validate();
         for (float value : {entityRange,blockEntityRange,terrainDetail}) validateRange(value,MaxBlocks);
         validateRange(replicationMargin,MaxBlocks);
         if (entityShape != UrdeEntityShape::circle && entityShape != UrdeEntityShape::square)
@@ -30,24 +33,28 @@ struct Settings {
             if (text == "circle") entityShape = UrdeEntityShape::circle;
             else if (text == "square") entityShape = UrdeEntityShape::square;
             else throw std::invalid_argument("entity_shape must be circle or square");
-        } else throw std::invalid_argument("Keys: entity_range, block_entity_range, terrain_detail, entity_shape, replication_margin");
+        } else if (movement::Settings::isKey(key)) movement.set(key,text);
+        else throw std::invalid_argument("Unknown client setting: " + key);
         validate();
     }
     nlohmann::json encode() const {
-        return {{"entity_range",encodeRange(entityRange)}, {"block_entity_range",encodeRange(blockEntityRange)},
+        auto json = movement.encode();
+        json.update({{"entity_range",encodeRange(entityRange)}, {"block_entity_range",encodeRange(blockEntityRange)},
                 {"terrain_detail",encodeRange(terrainDetail)},
                 {"entity_shape",entityShape == UrdeEntityShape::circle ? "circle" : "square"},
-                {"replication_margin",replicationMargin}};
+                {"replication_margin",replicationMargin}});
+        return json;
     }
     static Settings decode(nlohmann::json json) {
         json = migrateKeys(std::move(json),{{"entity_range","entityRange"},{"block_entity_range","blockEntityRange"},{"terrain_detail","terrainDetail"}});
-        if (json.size() < 3 || json.size() > 5) throw std::invalid_argument("Expected client range keys and optional entity_shape/replication_margin");
+        if (json.size() < 3 || json.size() > 9) throw std::invalid_argument("Expected client range keys and optional shape, margin and movement settings");
         for (auto const& [key,value] : json.items()) {
             if (key != "entity_range" && key != "block_entity_range" && key != "terrain_detail"
-                && key != "entity_shape" && key != "replication_margin")
+                && key != "entity_shape" && key != "replication_margin" && !movement::Settings::isKey(key))
                 throw std::invalid_argument("Unknown client config key: " + key);
         }
         Settings result;
+        result.movement = movement::Settings::decode(json,1);
         result.entityRange = readRange(json,"entity_range",MaxBlocks);
         result.blockEntityRange = readRange(json,"block_entity_range",MaxBlocks);
         result.terrainDetail = readRange(json,"terrain_detail",MaxBlocks);

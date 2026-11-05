@@ -12,6 +12,9 @@ enum class UrdeClientShapeKey { entity_shape };
 enum class UrdeEntityShape { circle, square };
 enum class UrdeServerKey { actor_interest_chunks };
 enum class UrdeVanilla { vanilla };
+enum class UrdeIntervalKey { update_interval };
+enum class UrdePlayersKey { full_rate_players };
+enum class UrdeBoolean { true_, false_ };
 
 // Keep the existing string-based validation/persistence path. to_chars uses a
 // locale-independent round-trip representation, unlike to_string's six decimals

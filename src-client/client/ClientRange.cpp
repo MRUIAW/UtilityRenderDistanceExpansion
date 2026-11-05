@@ -41,6 +41,7 @@ struct Config : client::Settings {
         derivedReplicationChunks = requiredLocalChunks(entityRange,replicationMargin);
         derivedReplicationOffsets = entityRange > 0 ? diskCount(derivedReplicationChunks) : 0;
         localReplication.rebuild(localReplicationChunks(entityRange,replicationMargin));
+        localReplication.movement = movement;
     }
     void set(std::string const& key, std::string const& text) {
         client::Settings::set(key,text);
@@ -310,7 +311,7 @@ std::string describe(Config const& value) {
     return "entity_range=" + rangeText(value.entityRange) + " block_entity_range=" + rangeText(value.blockEntityRange)
          + " terrain_detail=" + rangeText(value.terrainDetail)
          + " entity_shape=" + std::string(value.entityShape == UrdeEntityShape::circle ? "circle" : "square")
-         + " replication_margin=" + commandNumberText(value.replicationMargin);
+         + " replication_margin=" + commandNumberText(value.replicationMargin) + " " + value.movement.describe();
 }
 std::string status() {
     auto active = config.active();
@@ -326,7 +327,8 @@ std::string status() {
            + " derived_offsets=" + std::to_string(desired->derivedReplicationOffsets)
            + " hosting_replication_active=" + (enabled && session && replication::active() ? "true" : "false")
              + " local_replication_offsets=" + std::to_string(derived ? desired->localReplication.offsets.size() : 57)
-            + " local_replication_chunks(last_server_tick)=" + rangeText(float(replication::effectiveRadius()))
+             + " local_replication_chunks(last_server_tick)=" + rangeText(float(replication::effectiveRadius()))
+            + "; hosting_movement(last_server_tick): " + replication::effectiveMovement()
            + "; terrain_detail experimental=true (VV/RTX glass NOT guaranteed); enabled collection ignores fog (vanilla keeps native fog limit), visual fog unchanged; "
             "entity shape applies to ordinary collection / strict 3D block-AABB predicate / integer subchunk-center terrain LOD; "
             "residency, culler and renderer gates still apply; remote server /urde still caps available actors";

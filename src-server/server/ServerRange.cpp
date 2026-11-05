@@ -14,17 +14,26 @@ namespace urde::side {
 namespace {
 struct Config : replication::Range {
     Config() { rebuild(32); }
-    void validate() const { validateRange(float(actorInterestChunks), MaxServerChunks, true); }
+    void validate() const { validateRange(float(actorInterestChunks), MaxServerChunks, true); movement.validate(); }
     void set(std::string const& key, std::string const& value) {
-        if (key != "actor_interest_chunks") throw std::invalid_argument("Key: actor_interest_chunks");
-        rebuild(int(parseRange(value, MaxServerChunks, true)));
+        if (key == "actor_interest_chunks") rebuild(int(parseRange(value, MaxServerChunks, true)));
+        else if (movement::Settings::isKey(key)) movement.set(key,value);
+        else throw std::invalid_argument("Unknown server setting: " + key);
     }
-    nlohmann::json encode() const { return {{"actor_interest_chunks", encodeRange(float(actorInterestChunks))}}; }
+    nlohmann::json encode() const {
+        auto json = movement.encode();
+        json["actor_interest_chunks"] = encodeRange(float(actorInterestChunks));
+        return json;
+    }
     static Config decode(nlohmann::json json) {
         json = migrateKeys(std::move(json),{{"actor_interest_chunks","actorInterestChunks"}});
-        if (!json.is_object() || json.size() != 1) throw std::invalid_argument("Expected only actor_interest_chunks");
+        if (!json.is_object()) throw std::invalid_argument("Expected server config object");
+        for (auto const& [key,value] : json.items())
+            if (key != "actor_interest_chunks" && !movement::Settings::isKey(key))
+                throw std::invalid_argument("Unknown server config key: " + key);
         Config result;
         result.rebuild(int(readRange(json,"actor_interest_chunks",MaxServerChunks,true)));
+        result.movement = movement::Settings::decode(json,4);
         return result;
     }
 };
@@ -34,7 +43,7 @@ ll::event::ListenerPtr commandListener, stopListener;
 bool installed = false;
 std::string describe(Config const& value) {
     return "actor_interest_chunks=" + rangeText(float(value.actorInterestChunks)) + " offsets="
-         + std::to_string(value.actorInterestChunks ? value.offsets.size() : 57);
+         + std::to_string(value.actorInterestChunks ? value.offsets.size() : 57) + " " + value.movement.describe();
 }
 std::string status() {
     auto active = config.active();
