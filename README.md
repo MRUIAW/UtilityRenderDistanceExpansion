@@ -1,4 +1,4 @@
-# UtilityRenderDistanceExpansion 0.2.0
+# UtilityRenderDistanceExpansion 0.2.1
 
 Windows x64 mod for Bedrock **1.26.60.05 (client) / BDS 1.26.60.2**, requiring
 **LeviLamina >=26.60.2 <26.61.0**. Independent
@@ -22,31 +22,32 @@ view-distance, tick-distance, chunk-publishing or chunk-loading changes.
 | Both (file only, then reload) | `full_rate_types` | `[]` | list of exact type IDs, e.g. `minecraft:villager` |
 | Both (file only, then reload) | `full_rate_tags` | `[]` | list of exact vanilla `/tag` names |
 
-Exact overload syntax (angle brackets describe required parameters, not text to type):
+Movement settings remain accepted and persisted, but **movement=suspended
+(diagnostics only)** in 0.2.1: every interval result and send flag stays native.
+
+Expected usage rows (4 server, 6 client; angle brackets are parameters):
 
 ```text
-/urdec status
-/urdec reload
-/urdec set <entity_range|block_entity_range|terrain_detail> <value: float>
-/urdec set <entity_range|block_entity_range|terrain_detail> <vanilla>
-/urdec set replication_margin <value: float>
-/urdec set entity_shape <circle|square>
-/urde status
-/urde reload
-/urde set <actor_interest_chunks> <value: int>
-/urde set <actor_interest_chunks> <vanilla>
-/urde set update_interval <value: int>
-/urde set update_interval vanilla
+/urde <status|set|reload>
+/urde set <actor_interest_chunks|update_interval> <value: int>
+/urde set <actor_interest_chunks|update_interval> <vanilla>
 /urde set full_rate_players <true|false>
+/urdec <status|set|reload>
+/urdec set <entity_range|block_entity_range|terrain_detail|replication_margin> <value: float>
 /urdec set update_interval <value: int>
-/urdec set update_interval vanilla
+/urdec set <entity_range|block_entity_range|terrain_detail|update_interval> <vanilla>
+/urdec set entity_shape <circle|square>
 /urdec set full_rate_players <true|false>
 ```
 
-The native grey syntax hints/autocomplete expose `status|set|reload` at the root,
-then **all** side-specific key choices before you type the key. After the key,
+Expected grey hints/autocomplete (requires live UI verification): `status|set|reload`
+at either root, then **all** side-specific keys after `set `: server
+`actor_interest_chunks|update_interval|full_rate_players`; client
+`entity_range|block_entity_range|terrain_detail|entity_shape|replication_margin|update_interval|full_rate_players`.
+After the key,
 the range overloads offer the numeric `value: float` (client) / `value: int` (server)
-parameter and the hinted/completable **`vanilla`** choice. `entity_shape` offers
+parameter and the hinted/completable **`vanilla`** choice. `update_interval` keeps
+an integer parser and `vanilla`; `full_rate_players` offers `true|false`. `entity_shape` offers
 hinted `circle` and `square` values; `replication_margin` takes a number only. These are hard enums,
 not arbitrary strings or suggestions added only after a prefix. Bedrock may show
 the alternatives as separate syntax rows rather than a combined `number|vanilla`
@@ -120,16 +121,22 @@ each replication/collection cycle. No command-thread native member writes.
 
 ## Shapes and known limits
 
-Movement uses `min(native_interval, selected_interval)` for each native recipient
-query: players when enabled, listed type IDs, or listed vanilla entity tags select
-1 tick; all other actors select `update_interval`. It never increases an interval,
-and preserves unavailable native intervals. `update_interval=vanilla` disables
-all movement overrides, including player/type/tag rules. Full rate means at most
-one spatial update per server tick on native send attempts, not a heartbeat or
-extra simulation. It cannot fix absent replication, stopped simulation, or a
-different player packet path.
+**0.2.1 suspends the movement lever.** The 0.2.0 `min(native, selected)` decision
+code is retained and tested but unused. Its claim to increase real send cadence
+was unproven: live results at 200–300 blocks showed vanilla smoothest, cap 1
+worst, cap 4 stuttery, and cap 10 smoother but below vanilla. Listed cows/tags
+also became stuttery with the selected value 1. All configured movement values
+now have identical native behavior; range controls remain active.
 
-Dedicated defaults are 4 ticks and full-rate players; existing server files need
+Working hypothesis: `origin()` already gates elapsed ticks; the returned engaged
+value may become outgoing `mTicks`, whose ordinary Windows client interpolation
+uses `max(3,mTicks)` steps. Capping after that gate could shorten interpolation
+without increasing packets. Prior Windows research supports this interpretation;
+the Education recheck confirms its internal gate but has a Boolean return and
+fixed-three-step interpolation, so it cannot prove the Windows payload behavior.
+This remains a hypothesis pending controlled cadence/packet evidence.
+
+Stored dedicated defaults are 4 ticks and full-rate players; existing server files need
 only their original `actor_interest_chunks` key. All four movement keys are
 optional in old files and get the side's defaults. Example server config:
 
@@ -138,24 +145,37 @@ optional in old files and get the side's defaults. Example server config:
 ```
 
 Apply list edits with `/urde reload` or `/urdec reload`. For example,
-`/tag @e[type=minecraft:pig] add urde_full_rate` enables the listed-tag rule.
+`/tag @e[type=minecraft:pig] add urde_full_rate` assigns that vanilla tag; its
+movement rule is suspended along with every other movement override.
 `status` includes the interval, player toggle, and both list sizes; client status
 also reports `hosting_movement(last_server_tick)` or `native/inactive`. These
-client keys live in `client.json` and apply only in the matching in-process server
-tick while hosting. A remote-joined client cannot control its server's intervals.
+client keys live in `client.json`; hosting diagnostics run only in the matching
+in-process server tick. A remote-joined client cannot observe/control the remote
+server's interval hook; use the server build there. Both status commands clearly
+label the lever suspended even when settings are stored or hosting is inactive.
 
-The hosting default of 1 assumes no external network cost for a solo local world;
-LAN guests still create network traffic. At 20 TPS, full rate is estimated at
-**0.4–0.8 KB/s per moving actor and recipient**, before transport/compression costs;
-this is not a bandwidth measurement. Many moving actors/viewers increase cost.
+The former full-rate bandwidth estimate was not measured and does not describe
+this native-behavior diagnostics build. No increase in update rate is claimed.
 
-Temporary counters produce at most one log line per two seconds during server
-ticks, marked `[URDE temporary interval diagnostics]`, with `player_full_rate`,
-`listed_type`, `listed_tag`, `capped`, `native_unchanged`, and
-`no_actor_unavailable` counts. Outcomes count hook calls, not packets. Full-rate
-outcomes mean the rule lowered a native interval; a zero player count alone does
-not prove that players bypass the hook (native 0/1 requires no classification).
-These diagnostics are scheduled for removal in the next version.
+Temporary counters produce at most one `[URDE temporary movement diagnostics]`
+line per two seconds after matching server ticks. For player/other senders and
+3D distance `<64`, `[64,128)`, `>=128`, each vector counts native
+`nullopt,0,1,2,3,4,5-6,7,8-9,10,>10`. It also records `sendUpdate_calls` by sender
+kind, observed ticks/window milliseconds, and skipped invalid actor/distance
+reads. A sendUpdate call is an attempt and may produce zero or multiple packets;
+engaged results are gate outcomes, not delivery counts. See
+[exact format and interpretation](docs/implementation.md) for details. No actor
+pointers or per-pair tracking are retained.
+
+For the next live test, observe one continuously moving animal with one recipient
+at roughly **100, 200, 300 blocks for 30 seconds each**, in resident/ticking chunks.
+Collect server logs for each segment (hosting: client LL log), status output and
+visual behavior; repeat with settings 1/4/10/vanilla, which should behave alike in
+0.2.1. Compare native engaged/nullopt proportions and histogram values. Frequent
+attempts with sparse engaged results above 1 support a gate inside origin. Many
+engaged 0/1 results in the stuttering path weaken that explanation. Aggregates
+cannot establish a single pair's period or prove packet `mTicks`/client lerp;
+packet tracing would be needed for definitive confirmation or refutation.
 
 - Server: horizontal chunk disk `dx*dx + dz*dz <= r*r`, no vertical cutoff.
   Radius 8 contains **197** offsets. Explicit vanilla uses the native **57**

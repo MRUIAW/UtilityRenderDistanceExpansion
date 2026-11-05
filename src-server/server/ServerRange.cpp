@@ -49,7 +49,7 @@ std::string status() {
     auto active = config.active();
     return "server requested: " + describe(*config.desired()) + "; effective(last owner tick): "
          + (active && enabled ? describe(*active) : "native/inactive")
-         + "; horizontal chunk disk, resident chunks only; experimental terrain=false (client only)";
+          + "; movement=suspended (diagnostics only); horizontal chunk disk, resident chunks only; experimental terrain=false (client only)";
 }
 void commands() {
     auto& command = ll::command::CommandRegistrar::getServerInstance().getOrCreateCommand(

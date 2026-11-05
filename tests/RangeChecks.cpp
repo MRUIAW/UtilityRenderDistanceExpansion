@@ -2,6 +2,7 @@
 #include "range/Scope.h"
 #include "range/Config.h"
 #include "range/CommandValues.h"
+#include "range/MovementDiagnostics.h"
 #include "client/ClientConfig.h"
 #include <cassert>
 #include <iostream>
@@ -22,6 +23,22 @@ struct CheckConfig {
 
 int main() {
     using namespace urde;
+    using movement::diagnostics::valueBucket;
+    using movement::diagnostics::distanceBucket;
+    assert(valueBucket(std::nullopt) == 0);
+    std::array<size_t,13> expectedBins{1,2,3,4,5,6,6,7,8,8,9,10,10};
+    for (uint64_t i = 0; i < expectedBins.size(); ++i) assert(valueBucket(i) == expectedBins[i]);
+    assert(valueBucket(UINT64_MAX) == 10);
+    assert(distanceBucket(0,63.999,0) == 0 && distanceBucket(0,64,0) == 1);
+    assert(distanceBucket(0,127.999,0) == 1 && distanceBucket(0,128,0) == 2);
+    assert(distanceBucket(48,48,0) == 1); // true 3D distance, no horizontal-only shortcut
+    assert(!distanceBucket(std::numeric_limits<double>::quiet_NaN(),0,0));
+    movement::diagnostics::Counters counters;
+    counters.intervals[1][2][10].fetch_add(3);
+    counters.sendCalls[0].fetch_add(2);
+    counters.ticks.fetch_add(40);
+    counters.reset();
+    assert(counters.intervals[1][2][10] == 0 && counters.sendCalls[0] == 0 && counters.ticks == 0);
     auto policy = movement::Settings::decode({{"full_rate_types",{"minecraft:villager"}},
                                               {"full_rate_tags",{"smooth"}}},4);
     assert(policy.updateInterval == 4 && policy.fullRatePlayers && policy.typeIds.contains("minecraft:villager"));

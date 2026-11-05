@@ -1,8 +1,14 @@
 # Changelog
 
+## [0.2.1]
+
+- Suspend all movement overrides after live testing found smaller 0.2.0 values increased stutter. Preserve settings/commands and the tested decision code; status explicitly says suspended (diagnostics only). The post-origin cap was not proven to increase packet cadence.
+- Replace reduction counters with guarded player/other × 3D distance native nullopt/value histograms and signature-asserted sendUpdate attempt counters. Aggregate atomics on matching server ticks at most once per two seconds; retain no game pointers or per-pair state.
+- Use an explicit status|set|reload root enum and group set overloads by value kind: four server / six client usage rows, all side-specific keys and fixed choices hinted, native numeric parsers and validation retained. Bedrock UI still needs live verification.
+
 ## [0.2.0]
 
-- Require LeviLamina 26.60.2; add shared server-side per-recipient movement interval caps through public `SpatialActorNetworkData::_getOptimizationUpdateInterval` and typed owning `mEntity` access.
+- Require LeviLamina 26.60.2; add shared server-side per-recipient return-value caps through public `SpatialActorNetworkData::_getOptimizationUpdateInterval` and typed owning `mEntity` access. Send-rate effects were unproven and the lever is suspended in 0.2.1 after adverse live results.
 - Add `update_interval` (server 4 ticks, local hosting 1, or `vanilla`), `full_rate_players` (true), and file-configured `full_rate_types`/`full_rate_tags` (empty). Eligible exceptions select 1 tick; native faster/unavailable results are preserved. Old files load with side-specific defaults; commands expose hinted fixed choices and status shows settings/list sizes.
 - Add temporary two-second interval outcome diagnostics and pure decision/publication checks. Keep remote-joined clients inactive. Scope the existing symbol-report build rule to the mod target so pure checks can build.
 

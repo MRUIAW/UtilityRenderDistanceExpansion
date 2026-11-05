@@ -1,66 +1,135 @@
 # Implementation and acceptance
 
-## 0.2.0 movement interval lever
+## 0.2.1 observation-only movement diagnostics
 
 Both LL26.60.2 packages expose `SpatialActorNetworkData::mEntity` as `Actor&`:
 `TypedStorage` specializes reference types directly. `SpatialActorNetworkData`
 is nonpolymorphic, so the hook uses its direct typed receiver's `mEntity`;
 LL's `thisFor<T>()` is constrained to polymorphic receiver classes. No raw offsets,
-enclosing Actor-send scope, sender cache, or extra movement sender hook is needed.
+enclosing Actor-send scope or sender cache is needed.
 Education evidence at `0x105757d60` confirms the owner relationship; it is
 structural corroboration only, never a Windows ABI/address dependency.
 
-The only added native hook is:
+The two observation hooks assert their exact LL26.60.2 signatures on both targets:
 
 ```cpp
 using Interval = std::optional<uint64> (SpatialActorNetworkData::*)(Player&) const;
+using SendUpdate = void (SpatialActorNetworkData::*)(bool,bool,bool,bool);
 static_assert(std::is_same_v<decltype(&SpatialActorNetworkData::_getOptimizationUpdateInterval), Interval>);
+static_assert(std::is_same_v<decltype(&SpatialActorNetworkData::sendUpdate), SendUpdate>);
 static_assert(std::is_same_v<decltype(SpatialActorNetworkData::mEntity), Actor&>);
 static_assert(!std::is_polymorphic_v<SpatialActorNetworkData>);
 ```
 
-The existing signature-asserted Level/replication hooks remain. Native `origin`
-runs first. No owner access/classification occurs for absent intervals, vanilla,
-or native intervals at/below the minimum possible cap. With full-rate exceptions
-enabled this minimum is 1; without exceptions it is the general cap. In particular,
-native 2 with general cap 4 must still classify to honor a matching full-rate rule.
-Every actual result is `min(native, selected)`, including native 0; nullopt stays
-nullopt. Classification order is player, listed type, listed tag, general cap.
-The Player argument is the recipient; all classification uses the owning sender.
+The interval hook calls origin exactly once and always returns that exact native
+optional. `movement::decide` remains unused and tested. Config, defaults,
+validation, persistence and permissions stay compatible; both status commands
+say `movement=suspended (diagnostics only)`. Changing movement settings cannot
+change native interval results in this build. No packet data, debug globals,
+force flags, send cadence or interpolation is modified.
 
-Type hash sets are built during validated config creation/publication. The hot
-path does no set construction or tag-vector copying. Type lookup uses LL's
-`Actor::getTypeName()` reference. Tag checks call MCAPI `Actor::hasTag(string const&)`
-once per configured tag until a match: O(K * native tag-lookup cost) in the worst
-case for K configured tags. Native hasTag internals/allocation cost are not audited
-here. No per-call allocation is added by URDE's decision function.
-
-The hook requires the existing thread-local, generation-checked non-client Level
-tick scope, then verifies sender/recipient levels and nonremoved sender. That scope
+Collection requires the existing thread-local, generation-checked non-client Level
+tick scope, then verifies sender/recipient levels and nonremoved actors. That scope
 pins the complete immutable replication/movement snapshot on the server owner
 thread. Client local hosting copies movement from client.json into localReplication;
 the server tick pins the requested snapshot exactly as with radius. No matching
-server Level on remote join means passthrough. Lifecycle invalidation clears
+server Level on remote join means no collection. Lifecycle invalidation clears
 observed policy/counters; stack contexts clear on normal/exception/nested exits.
-Disable removes the interval hook before the Level hook. Effective hosting status
+Disable removes both observation hooks before the Level hook. Effective hosting status
 reflects the last accepted server-tick policy, not the client-render snapshot.
 
-Temporary relaxed atomic counters classify outcomes and are drained after a
-matching server Level tick, at most once per two seconds. Native-unchanged calls
-with native 0/1 are deliberately not classified by actor kind; zero player reductions
-cannot prove hook nonparticipation. Logs are aggregate call counts, not sent packet
-counts. The fixed marker and all counters should be removed in the next version.
+The marked temporary block in `Replication.cpp` and `MovementDiagnostics.h`
+contains collection/reporting helpers. Its two native hot paths mutate only
+lock-free relaxed atomic counters: no formatting, timers, allocation, maps, type
+lookups or tag scans. Guarded `getPosition()` reads and `isPlayer()` classify the
+sender and recipient using squared 3D distance, without a square root. All native
+results (including nullopt and 0/1) are classified; unavailable lifecycle or
+nonfinite distance reads go into explicit skipped counters. Out-of-scope calls
+are ignored. No game pointers are retained. The optional single-pair estimate is
+omitted because it would require tracking a pair in the hot path.
 
-Live acceptance (not performed by the build): verify hinted keys/true|false/vanilla,
-invalid input/reload retention, and defaults 4 server/1 hosting. Compare distant
-moving players, villagers, tagged pigs and unlisted actors at several distances;
-toggle full_rate_players, edit both lists/reload, compare cap 1/4/10/vanilla, and
-confirm faster native updates never slow. Check each diagnostics category while
-also observing native 0/1 caveats. Compare dedicated and solo/LAN hosting; remote
-join, dimension changes, leave/rejoin, pause/resume, server stop and disable must
-clear scopes/effective status and retain native client-only receive behavior.
-Observe packet cadence/bandwidth if needed; smoothing and universal player-path
-coverage remain runtime questions. No interpolation steps/teleports are altered.
+`sendUpdate` counts entries before calling origin once with all four original
+flags. Multiple native callers need no special enclosing caller scope; collection
+still requires the matching tick/owner. Entry counts are **attempts**, may yield
+zero or many recipient packets, and are neither packet nor delivery counts.
+
+The matching tick drains counters after native tick completion at most once per
+two seconds. The timer starts on the first tick of each generation, so loading
+time before the first tick is not included. `window_ms` is wall time (a pause can
+increase it); `ticks` counts observed Level ticks. Exact logger message format
+(each `V` is 11 comma-separated unsigned counts in `bins` order):
+
+```text
+[URDE temporary movement diagnostics] window_ms=W ticks=T bins=nullopt,0,1,2,3,4,5-6,7,8-9,10,>10 player={lt64:[V],64to128:[V],ge128:[V]} other={lt64:[V],64to128:[V],ge128:[V]} sendUpdate_calls={player:P,other:O} skipped={interval:I,sendUpdate:S}
+```
+
+`64to128` is `[64,128)` blocks; `lt64` and `ge128` complete the disjoint buckets.
+Counts are scoped to the matching server Level. Server build: its LL mod logger;
+hosting client build: client LL mod logger. Remote client alone cannot observe
+the remote server's gate. Existing LL logger timestamps/prefixes surround the message.
+
+### What the 0.2.0 results establish
+
+The old pure checks proved only min/callback/config arithmetic. They did not prove
+more sends. User testing at 200–300 blocks found vanilla smoothest, cap1 worst,
+cap4 stuttery and cap10 smoother but below vanilla; cow/type/tag selection also
+reproduced cap1 stutter. Old reduction-only counters showing zero players/types/
+tags do not establish those classes bypassed the hook.
+
+Prior Windows findings mapped BDS `0x1413e7730` / client `0x141040390` to the
+combined elapsed gate and optional, outgoing `mTicks`, and ordinary Windows client
+`max(3,mTicks)` interpolation. These support the **unproven working hypothesis**:
+post-origin capping shortens the lerp window without increasing send cadence.
+Rechecking only ida-edu4 confirms `lastTick + interval <= currentTick` at
+`0x105758358/371/375`, but Education's helper returns Boolean and its ordinary
+position interpolation uses fixed three steps. Its code cannot independently
+prove the current Windows optional payload or interpolation semantics. Corrected
+annotations are saved; IDA is closed. No Windows database was opened.
+
+For controlled live acceptance, use one continuously moving animal and one
+recipient at approximately 100/200/300 blocks for 30 seconds each, with resident,
+ticking chunks. Keep animal/type, load and TPS comparable; collect each segment's
+logs and visual behavior. Settings 1/4/10/vanilla and player/type/tag rules must
+all retain native behavior in 0.2.1. Many send attempts with sparse engaged
+results >1 and intervening nullopts support gating inside origin. Frequent
+engaged 0/1 in the affected path weakens this explanation. These aggregates mix
+actors/recipients and cannot measure exact single-pair periods; forced/absolute/
+prediction paths can bypass the gate. Definitive confirmation needs unchanged
+packet cadence plus shortened outgoing mTicks/lerp in a controlled comparison;
+increased packet cadence when only capping the result, or unchanged mTicks/lerp,
+would refute the corresponding hypothesis. This build alone cannot prove either.
+
+### Command registration and expected UI
+
+Inspected installed client/server headers and official LeviLamina tag v26.60.2
+sources: `src/ll/api/command/{CommandHandle,OverloadData,CommandRegistrar}.cpp`.
+`OverloadData::addTextImpl` uses Placeholder + EnumAutocompleteExpansion;
+`CommandRegistrar::addText` creates/reuses `ll_text_enum_name_<word>` with one
+value. `CommandHandle::registerOverload` registers each parameter vector;
+`ParamTraits<enum>` registers its reflected values with expanded autocomplete.
+Nothing in those LL paths explicitly removes reload. The Bedrock UI omission's
+root cause remains unproven without a running UI; multiple singleton text enums
+are a plausible contributor, not an established diagnosis.
+
+0.2.1 advertises all three root actions in one `UrdeAction` hard enum. Longer
+overloads use `UrdeSet` so only set takes key/value arguments. All set overloads
+group keys by value kind: server integer / vanilla / Boolean; client float /
+interval integer / vanilla / shape / Boolean. That yields four server and six
+client registered usage rows, including the action row. A bare set reports
+`Usage: set <key> <value>`. All successful command words/keys, validation,
+GameDirectors server permission and candidate persistence remain unchanged.
+Integer keys retain `Int`, float keys `Val`; no string/Id numeric regression.
+
+Expected root hints: `status|set|reload` for both roots. After server set:
+`actor_interest_chunks|update_interval|full_rate_players`. After client set:
+`entity_range|block_entity_range|terrain_detail|entity_shape|replication_margin|update_interval|full_rate_players`.
+After the key: numeric placeholders where applicable, hinted vanilla, Boolean
+true|false or shape circle|square. Margin stays numeric-only. Exact logical
+usage rows are listed in README; Bedrock may localize type labels, expand enums
+or wrap long rows. UI verification, invalid input, persistence/reload and server
+permission checks are live acceptance items. Compile-time assertions verify the
+enum sizes/options and reflected parameter counts; pure checks retain the old
+decision policy and verify histogram/distance boundaries and counter resets.
 
 ## 0.1.5 shape and hosting margin
 

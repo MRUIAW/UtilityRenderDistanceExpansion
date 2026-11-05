@@ -97,6 +97,8 @@ struct Settings {
     }
 };
 
+// Retained 0.2.0 policy, unused by native hooks in 0.2.1. Its arithmetic is tested;
+// lowering a post-origin result is NOT proven to increase native send cadence.
 // Callbacks are lazy: classification happens only when it can lower the native
 // interval. Empty optionals stay empty; native 0/1 and vanilla need no actor query.
 template <class IsPlayer, class TypeName, class HasTag>

@@ -317,7 +317,7 @@ std::string status() {
     auto active = config.active();
     auto desired = config.desired();
     int derived = desired->localReplication.actorInterestChunks;
-    return "client requested: " + describe(*desired) + "; effective(last owner tick): "
+    return "movement=suspended (diagnostics only); client requested: " + describe(*desired) + "; effective(last owner tick): "
          + (active && enabled && session ? describe(*active) : "native/inactive")
           + "; last_refreshed_camera_f=" + std::to_string(observedFar.load())
            + " fog_end=" + std::to_string(observedFog.load())
