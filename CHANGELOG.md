@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.1]
+
+- Preserve eligible movement gate timing while using elapsed ticks for late interpolation payloads: nullopt openings cap at 10; engaged V>N returns min(V,max(N,elapsed)); native V<=N and vanilla remain unchanged. Add lever_late without changing existing counter meanings, and cover sparse attempts and payload invariants in pure checks.
+- Use literal status/reload/set and compact named setting enums in real usage, server integer/client float values and a separate client entity_shape row. Retain validation, persistence and GameDirectors permission; add the existing misuse explanations after native rejection without extra usage rows.
+- Add six temporary echo-only command-hint styles per side behind one compile-time option, with registry and serialized AvailableCommands audits. Document source/native syntax evidence and the still-unproven Windows reload-hint cause under docs; live comparison remains necessary.
+
 ## [0.3.0]
 
 - Open eligible native nullopt movement gates using the last final engaged tick per stable sender/recipient ID, and cap larger engaged payloads. Preserve native faster values; vanilla disables the lever. Dedicated default 4 ticks, hosting 1; list matches select 1. Document the native-policy limit, three-step interpolation floor, and estimated packet cost (+70% at 4, about 6x at 1).

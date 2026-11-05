@@ -108,9 +108,9 @@ void reportDiagnostics() {
     auto native = histogram(diagnostics.intervals);
     auto final = histogram(diagnostics.finalIntervals);
     UrdeMod::getInstance().getSelf().getLogger().info(
-        "[URDE temporary movement diagnostics] window_ms={} ticks={} bins=nullopt,0,1,2,3,4,5-6,7,8-9,10,>10 native={} FINAL={} lever_opened={} lever_capped={} lever_full_rate={} pair_overflow={} sendUpdate_calls={{player:{},other:{}}} skipped={{interval:{},sendUpdate:{}}}",
+        "[URDE temporary movement diagnostics] window_ms={} ticks={} bins=nullopt,0,1,2,3,4,5-6,7,8-9,10,>10 native={} FINAL={} lever_opened={} lever_capped={} lever_full_rate={} lever_late={} pair_overflow={} sendUpdate_calls={{player:{},other:{}}} skipped={{interval:{},sendUpdate:{}}}",
         elapsed,take(diagnostics.ticks),native,final,take(diagnostics.leverOpened),take(diagnostics.leverCapped),
-        take(diagnostics.leverFullRate),take(diagnostics.pairOverflow),take(diagnostics.sendCalls[0]),take(diagnostics.sendCalls[1]),
+        take(diagnostics.leverFullRate),take(diagnostics.leverLate),take(diagnostics.pairOverflow),take(diagnostics.sendCalls[0]),take(diagnostics.sendCalls[1]),
         take(diagnostics.skippedInterval),take(diagnostics.skippedSend));
 }
 
@@ -143,6 +143,7 @@ LL_TYPE_INSTANCE_HOOK(UpdateInterval, ll::memory::HookPriority::Normal, SpatialA
             auto decision = movement::decide(native,send->now,record->lastEngaged(),send->selection->interval);
             final = decision.interval;
             if (final) record->sent(send->now);
+            if (decision.late) diagnostics.leverLate.fetch_add(1,std::memory_order_relaxed);
             if (decision.outcome == movement::Outcome::opened) diagnostics.leverOpened.fetch_add(1,std::memory_order_relaxed);
             if (decision.outcome == movement::Outcome::capped) diagnostics.leverCapped.fetch_add(1,std::memory_order_relaxed);
             if (decision.outcome != movement::Outcome::unchanged && send->selection->fullRate)

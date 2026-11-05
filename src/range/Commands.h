@@ -6,62 +6,62 @@
 #include "ll/api/command/Optional.h"
 #include "mc/server/commands/CommandOutput.h"
 
+namespace ll::command {
+// Each package registers only its own side. A short name plus no expansion
+// keeps usage as <setting: setting>, rather than spelling out every key.
+template <> struct enum_name<urde::UrdeClientKey> { static constexpr char const* value = "setting"; };
+template <> struct enum_name<urde::UrdeServerKey> { static constexpr char const* value = "setting"; };
+}
 namespace urde {
-// Share action and side-key enum identities across all overloads so there is
-// one metadata value set at each position; exact Bedrock UI merging needs a live
-// check. Optional fields handle bare actions and incomplete set explicitly.
+struct EmptyParams {};
 template <class Key, class Number>
-struct NumberParams { UrdeAction action; ll::command::Optional<Key> key; ll::command::Optional<Number> value; };
-template <class Key, class Value>
-struct ChoiceParams { UrdeAction action; Key key; Value value; };
+struct NumberParams { Key setting; ll::command::Optional<Number> value; };
+template <class Key>
+struct VanillaParams { Key setting; };
+struct ShapeParams { UrdeEntityShape shape; };
 static_assert(ll::command::ParamTraits<float>::parseRuleValue() == CommandRegistry::HardNonTerminal::Val);
 static_assert(ll::command::ParamTraits<int>::parseRuleValue() == CommandRegistry::HardNonTerminal::Int);
-template <class T, size_t Count>
-constexpr bool hintedEnum = ll::command::ParamTraits<T>::dataType() == CommandParameterDataType::Enum
-    && ll::command::ParamTraits<T>::options() == CommandParameterOption::EnumAutocompleteExpansion
-    && magic_enum::enum_count<T>() == Count;
-static_assert(hintedEnum<UrdeAction,3> && hintedEnum<UrdeClientKey,6> && hintedEnum<UrdeServerKey,2>);
-static_assert(hintedEnum<UrdeVanilla,1> && hintedEnum<UrdeEntityShape,2>);
-static_assert(magic_enum::enum_name(UrdeAction::reload) == "reload");
-static_assert(ll::reflection::member_count_v<NumberParams<UrdeClientKey,float>> == 3);
+static_assert(magic_enum::enum_count<UrdeClientKey>() == 5 && magic_enum::enum_count<UrdeServerKey>() == 2);
 using SetControl = std::function<std::string(std::string const&, std::string const&)>;
 
-template <class Key, class Value>
-void registerChoice(ll::command::CommandHandle& command, SetControl set) {
-    command.overload<ChoiceParams<Key,Value>>().required("action").required("key").required("value")
-        .execute([set](CommandOrigin const&, CommandOutput& output, ChoiceParams<Key,Value> const& params) {
-            if (params.action != UrdeAction::set) return output.error("status/reload take no key or value");
-            try {
-                auto key = std::string(magic_enum::enum_name(params.key));
-                if constexpr (std::is_same_v<Value,UrdeEntityShape>) {
-                    if (key != "entity_shape") throw std::invalid_argument("circle/square require entity_shape");
-                } else if (key == "entity_shape" || key == "replication_margin") {
-                    throw std::invalid_argument("vanilla is not supported for " + key);
-                }
-                output.success(set(key,std::string(magic_enum::enum_name(params.value))));
-            } catch (std::exception const& error) { output.error(error.what()); }
-        });
+// Do not use LL26.60.2 deoption(): it uses logical ! instead of bitwise ~.
+// Explicitly clear the one display-expansion bit, retaining all other options.
+inline void compactSetting(CommandParameterData& data) {
+    data.mOptions = static_cast<CommandParameterOption>(static_cast<uchar>(data.mOptions)
+        & ~static_cast<uchar>(CommandParameterOption::EnumAutocompleteExpansion));
 }
 template <class Key, class Number>
 void registerControls(ll::command::CommandHandle& command, std::function<std::string()> status,
                       SetControl set, std::function<std::string()> reload) {
     static_assert((std::is_same_v<Key,UrdeClientKey> && std::is_same_v<Number,float>)
                || (std::is_same_v<Key,UrdeServerKey> && std::is_same_v<Number,int>));
-    command.overload<NumberParams<Key,Number>>().required("action").optional("key").optional("value")
-        .execute([status,set,reload](CommandOrigin const&, CommandOutput& output, NumberParams<Key,Number> const& params) {
+    // Literal action layout is provisional until the separate probe roots have
+    // been compared live. Keep this registration in one shared function.
+    command.overload<EmptyParams>().text("status")
+        .execute([status](CommandOrigin const&, CommandOutput& output) { output.success(status()); });
+    command.overload<EmptyParams>().text("reload")
+        .execute([reload](CommandOrigin const&, CommandOutput& output) {
+            try { output.success(reload()); } catch (std::exception const& error) { output.error(error.what()); }
+        });
+    command.overload<NumberParams<Key,Number>>().text("set").required("setting").modify(compactSetting).optional("value")
+        .execute([set](CommandOrigin const&, CommandOutput& output, NumberParams<Key,Number> const& params) {
+            if (!params.value) return output.error("set requires a value: set <key> <value>");
+            try { output.success(set(std::string(magic_enum::enum_name(params.setting)),commandNumberText(*params.value))); }
+            catch (std::exception const& error) { output.error(error.what()); }
+        });
+    command.overload<VanillaParams<Key>>().text("set").required("setting").modify(compactSetting).text("vanilla")
+        .execute([set](CommandOrigin const&, CommandOutput& output, VanillaParams<Key> const& params) {
             try {
-                if (params.action != UrdeAction::set) {
-                    if (params.key || params.value) return output.error("status/reload take no key or value");
-                    return output.success(params.action == UrdeAction::status ? status() : reload());
-                }
-                if (!params.key) return output.error("set requires a key and value: set <key> <value>");
-                if (!params.value) return output.error("set requires a value: set <key> <value>");
-                auto key = std::string(magic_enum::enum_name(*params.key));
-                if (key == "entity_shape") return output.error("entity_shape requires circle or square");
-                output.success(set(key,commandNumberText(*params.value)));
+                auto key = std::string(magic_enum::enum_name(params.setting));
+                if (key == "replication_margin") return output.error("vanilla is not supported for replication_margin");
+                output.success(set(key,"vanilla"));
             } catch (std::exception const& error) { output.error(error.what()); }
         });
-    registerChoice<Key,UrdeVanilla>(command,set);
-    if constexpr (std::is_same_v<Key,UrdeClientKey>) registerChoice<Key,UrdeEntityShape>(command,set);
+    if constexpr (std::is_same_v<Key,UrdeClientKey>)
+        command.overload<ShapeParams>().text("set").text("entity_shape").required("shape")
+            .execute([set](CommandOrigin const&, CommandOutput& output, ShapeParams const& params) {
+                try { output.success(set("entity_shape",std::string(magic_enum::enum_name(params.shape)))); }
+                catch (std::exception const& error) { output.error(error.what()); }
+            });
 }
 }

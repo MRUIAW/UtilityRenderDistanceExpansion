@@ -1,4 +1,4 @@
-# UtilityRenderDistanceExpansion 0.3.0
+# UtilityRenderDistanceExpansion 0.3.1
 
 Windows x64 mod for Bedrock **1.26.60.05 (client) / BDS 1.26.60.2**, requiring
 **LeviLamina >=26.60.2 <26.61.0**. Independent
@@ -26,24 +26,26 @@ Commands (angle brackets are parameters):
 ```text
 /urde status
 /urde reload
-/urde set <actor_interest_chunks|update_interval> <value: int|vanilla>
+/urde set <setting: setting> [value: int]
+/urde set <setting: setting> vanilla
 /urdec status
 /urdec reload
-/urdec set <entity_range|block_entity_range|terrain_detail|replication_margin|update_interval> <value: float|vanilla>
+/urdec set <setting: setting> [value: float]
+/urdec set <setting: setting> vanilla
 /urdec set entity_shape <circle|square>
 ```
 
-Expected grey hints/autocomplete: `status`, `set`, `reload` once each at either
-root, then each side's key once after `set `. All overloads share the same action
-enum and the same side-key enum. This yields **two registered server rows / three
-client rows**: action + optional key/number; action + key/vanilla; and client
-action + key/shape. Thus white usage can show `status|set|reload [key] [value]`
-on the numeric row. `status`/`reload` reject extra arguments; `set` requires both.
-Shared keys can offer `vanilla`/shape choices for incompatible keys; these return
-clear errors. `replication_margin` accepts numbers only; `entity_shape` accepts
-circle/square only. Client `update_interval` uses the float parser but requires a
-whole value (4.0 is accepted, 4.5 rejected). Exact UI deduplication/layout remains
-unverified. See [registration evidence](docs/movement-0.3.0.md).
+Actions are literal words. The short `setting` enum keeps the key list out of
+usage while retaining key completion after `set `. These are **four server rows /
+five client rows**. The numeric value is optional in the grammar so a missing
+value receives a clear error; a successful `set` still requires it.
+`status`/`reload` accept no extra arguments. `replication_margin` accepts numbers
+only and rejects `vanilla`; `entity_shape` accepts circle/square in its own row.
+Bare `set` and invalid action/shape arguments retain explanatory error messages
+after native syntax rejection.
+Client `update_interval` uses the float parser but requires a whole value (4.0 is
+accepted, 4.5 rejected). The missing `reload` grey hint reported with 0.3.0 remains
+under investigation; the exact client hint layout is not established by a build.
 Server `/urde` still requires **GameDirectors** permission. Examples:
 
 ```text
@@ -113,19 +115,25 @@ each replication/collection cycle. No command-thread native member writes.
 
 ## Shapes and known limits
 
-**0.3.0 opens the eligible movement gate as well as capping its payload.** The
+**0.3.1 retains the 0.3.0 movement gate and accounts for late attempted sends.** The
 native helper runs first. For each stable sender/recipient ID pair, record the
 server tick of every final engaged result. With effective interval N:
 
 | Native result | Condition | Final result |
 |---|---|---|
-| nullopt | no record, or elapsed >= N | engaged N |
+| nullopt | no record | engaged N |
+| nullopt | elapsed >= N | engaged clamp(elapsed, 1, 10) |
 | nullopt | elapsed < N | nullopt |
-| engaged V | V > N | engaged N |
+| engaged V | V > N | engaged min(V, max(N, elapsed)) |
 | engaged V | V <= N | unchanged V |
 | any | vanilla / outside matching server tick and sendUpdate | unchanged |
 
 N defaults to dedicated **4**, hosting **1**; exact listed types/tags select **1**.
+Without a record, engaged V>N uses N; V<=N always survives unchanged. Every
+final engaged result records the current tick. A late send thus gets a payload
+matching its actual gap, bounded by native V when engaged or 10 ticks when
+opening nullopt. Ten is a conservative half-second payload limit at 20 TPS,
+not a recovered hidden native policy. The opening threshold remains N.
 This only speeds eligible updates: N at or above the native policy has no steady
 cadence effect, apart from the initial no-record opening. Native faster values
 survive. It is not a guaranteed heartbeat: change detection, recipient membership,
@@ -136,7 +144,8 @@ active target or one pending target; no growing queue was found statically.
 0.2.0 changed only the engaged payload, not the elapsed gate, causing a short lerp
 followed by waiting in the user's tests. 0.2.1 suspended that cap and measured a
 native far-actor gap around seven ticks. Earlier “send interval” claims for 0.2.0
-were incorrect; the 0.3.0 gate behavior still requires live acceptance.
+were incorrect. The user found 0.3.0 substantially smoother, with a slight hitch
+remaining outside vanilla; 0.3.1 addresses late gaps but needs live acceptance.
 
 Missing movement keys receive side defaults. Missing `full_rate_types` alone
 defaults to `["minecraft:player"]`; explicit empty or nonempty lists replace it.
@@ -168,21 +177,24 @@ Temporary counters produce at most one `[URDE temporary movement diagnostics]`
 line per two seconds after matching server ticks. For player/other senders and
 3D distance `<64`, `[64,128)`, `>=128`, both `native` and `FINAL` vectors count
 `nullopt,0,1,2,3,4,5-6,7,8-9,10,>10`. It also records `sendUpdate_calls` by sender
-kind, `lever_opened`, `lever_capped`, `lever_full_rate`, `pair_overflow`, observed
+kind, `lever_opened`, `lever_capped`, `lever_full_rate`, `lever_late`, `pair_overflow`, observed
 ticks/window milliseconds, and skipped invalid actor/distance
 reads. A sendUpdate call is an attempt and may produce zero or multiple packets;
 engaged results are gate outcomes, not delivery counts. See
-[exact format and interpretation](docs/movement-0.3.0.md) for details. The bounded
+[current rule and interpretation](docs/movement-0.3.1.md) for details. The bounded
 65,536-slot pair table retains IDs/ticks only, expires unseen pairs after about
 10 seconds of server ticks, and clears on vanilla/exit/generation/disable.
 
 For the next live test, observe one continuously moving animal with one recipient
-at roughly **200 blocks for 30 seconds per setting**, in resident/ticking chunks.
+at a distance where it is visibly ticking for **30 seconds per setting**, in
+resident chunks. The user's animal stopping around 160 blocks was attributed to
+server tick-distance; render/interest range does not extend simulation.
 Collect server logs for each segment (hosting: client LL log), status output and
 visual behavior; compare `vanilla`, 4, 2, 1, then add its exact type to
 `full_rate_types` and reload with N=4. Vanilla should have identical native/FINAL
 histograms and zero lever changes. Faster settings should show `lever_opened`,
-fewer FINAL nullopts, and selected 4/2/1 payloads; listed types should increment
+fewer FINAL nullopts, and mostly 4/2/1 payloads with longer late-gap payloads;
+`lever_late` counts engaged tracked gaps exceeding the selected N. Listed types should increment
 `lever_full_rate`. Check smoothness, lag, native prediction interaction and
 `pair_overflow=0`. Aggregates cannot prove delivery or exact pair cadence. Later
 repeat with a second player and check the player bins; also test lifecycle changes

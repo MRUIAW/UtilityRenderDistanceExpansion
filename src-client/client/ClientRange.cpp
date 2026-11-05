@@ -1,5 +1,7 @@
 #include "range/Side.h"
 #include "range/Commands.h"
+#include "range/CommandErrorOutput.h"
+#include "range/HintExperiments.h"
 #include "range/Config.h"
 #include "range/Limits.h"
 #include "range/Scope.h"
@@ -65,7 +67,7 @@ std::atomic<float> observedFar = 0, observedFog = 0;
 std::mutex ownerMutex;
 std::condition_variable restored;
 std::thread::id ownerThread;
-ll::event::ListenerPtr commandListener, tickListener, exitListener, joinListener, stopListener;
+ll::event::ListenerPtr commandListener, commandErrorListener, tickListener, exitListener, joinListener, stopListener;
 bool installed = false;
 
 struct QueueContext {
@@ -339,6 +341,7 @@ void commands() {
     registerControls<UrdeClientKey,float>(command,status,
         [](auto const& key, auto const& value) { return config.change(key,value) + status(); },
         [] { return config.reload() + status(); });
+    hint::registerExperiments(ll::command::CommandRegistrar::getClientInstance(),true);
 }
 }
 bool load(std::filesystem::path const& dir) {
@@ -387,6 +390,7 @@ bool enable() {
     enabled = true;
     auto& bus = ll::event::EventBus::getInstance();
     commandListener = bus.emplaceListener<ll::event::ClientCommandRegisterEvent>([](auto&) { commands(); });
+    commandErrorListener = bus.emplaceListener<ll::event::ExecutedCommandEvent>([](auto& event) { explainCommandMisuse(event,true); });
     tickListener = bus.emplaceListener<ll::event::ClientLevelTickEvent>([](auto& event) { tick(event.level()); });
     // Restore while cameras still exist; if the exit event is post-teardown there
     // are no surviving native values to restore. All scopes self-clear on return.
@@ -420,9 +424,9 @@ bool disable() {
     } else if (session) { refreshCameras(); clearSession(); }
     auto& bus = ll::event::EventBus::getInstance();
     replication::disable();
-    for (auto const& listener : {commandListener,tickListener,exitListener,joinListener,stopListener})
+    for (auto const& listener : {commandListener,commandErrorListener,tickListener,exitListener,joinListener,stopListener})
         if (listener) bus.removeListener(listener);
-    commandListener = tickListener = exitListener = joinListener = stopListener = nullptr;
+    commandListener = commandErrorListener = tickListener = exitListener = joinListener = stopListener = nullptr;
     DrawBlockEntities::unhook(); BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
     installed = false;
     config.clearEffective();

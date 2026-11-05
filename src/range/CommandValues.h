@@ -6,7 +6,7 @@
 
 namespace urde {
 // External linkage for LL's reflected parameters and hard-enum registration.
-enum class UrdeClientKey { entity_range, block_entity_range, terrain_detail, replication_margin, update_interval, entity_shape };
+enum class UrdeClientKey { entity_range, block_entity_range, terrain_detail, replication_margin, update_interval };
 enum class UrdeEntityShape { circle, square };
 enum class UrdeServerKey { actor_interest_chunks, update_interval };
 enum class UrdeVanilla { vanilla };

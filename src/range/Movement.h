@@ -15,15 +15,24 @@ enum class Outcome { unchanged, opened, capped };
 struct Decision {
     std::optional<uint64_t> interval;
     Outcome outcome = Outcome::unchanged;
+    bool late = false; // tracked engaged result whose actual gap exceeded N
 };
+inline constexpr uint64_t OpenedPayloadCap = 10;
 // Pure post-origin lever. last is our last FINAL engaged result, never the
 // opaque native last-send record. Native faster values always survive.
 constexpr Decision decide(std::optional<uint64_t> native, uint64_t now,
                           std::optional<uint64_t> last, unsigned interval) {
     if (!interval) return {native};
-    if (native) return {*native > interval ? interval : *native,
-                        *native > interval ? Outcome::capped : Outcome::unchanged};
-    if (!last || (now >= *last && now-*last >= interval)) return {interval,Outcome::opened};
+    auto elapsed = last && now >= *last ? now-*last : 0;
+    bool late = last && now >= *last && elapsed > interval;
+    if (native) {
+        // Never lengthen a native payload or delay a native engaged result.
+        // A late attempted send needs a longer lerp than fixed N, up to V.
+        auto value = *native > interval ? std::min(*native,std::max(uint64_t(interval),elapsed)) : *native;
+        return {value,value < *native ? Outcome::capped : Outcome::unchanged,late};
+    }
+    if (!last || (now >= *last && elapsed >= interval))
+        return {last ? std::clamp(elapsed,uint64_t(1),OpenedPayloadCap) : interval,Outcome::opened,late};
     return {native};
 }
 

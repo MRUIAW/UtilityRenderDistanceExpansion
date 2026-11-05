@@ -29,7 +29,7 @@ struct Counters {
     decltype(intervals) finalIntervals{};
     std::array<std::atomic<uint64_t>,2> sendCalls{};
     std::atomic<uint64_t> ticks{}, skippedInterval{}, skippedSend{};
-    std::atomic<uint64_t> leverOpened{}, leverCapped{}, leverFullRate{}, pairOverflow{};
+    std::atomic<uint64_t> leverOpened{}, leverCapped{}, leverFullRate{}, leverLate{}, pairOverflow{};
     void reset() {
         for (auto& sender : intervals) for (auto& distance : sender)
             for (auto& value : distance) value.store(0,std::memory_order_relaxed);
@@ -38,6 +38,7 @@ struct Counters {
         leverOpened.store(0,std::memory_order_relaxed);
         leverCapped.store(0,std::memory_order_relaxed);
         leverFullRate.store(0,std::memory_order_relaxed);
+        leverLate.store(0,std::memory_order_relaxed);
         pairOverflow.store(0,std::memory_order_relaxed);
         for (auto& value : sendCalls) value.store(0,std::memory_order_relaxed);
         ticks.store(0,std::memory_order_relaxed);

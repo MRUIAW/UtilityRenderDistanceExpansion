@@ -2,6 +2,7 @@
 #include "range/Scope.h"
 #include "range/Config.h"
 #include "range/CommandValues.h"
+#include "range/CommandErrors.h"
 #include "range/MovementDiagnostics.h"
 #include "range/MovementPairs.h"
 #include "client/ClientConfig.h"
@@ -24,6 +25,17 @@ struct CheckConfig {
 
 int main() {
     using namespace urde;
+    assert(commandMisuse("/urde set",false) == "set requires a key and value: set <key> <value>");
+    assert(commandMisuse(" urde reload update_interval 4 ",false) == "status/reload take no key or value");
+    assert(commandMisuse("urdec set entity_shape 4",true) == "entity_shape requires circle or square");
+    assert(commandMisuse("urdec set entity_shape",true) == "set requires a value: set <key> <value>");
+    assert(commandMisuse("urdec set entity_shape vanilla",true) == "vanilla is not supported for entity_shape");
+    assert(commandMisuse("urdec set entity_range square",true) == "circle/square require entity_shape");
+    for (auto line : {"urde status","urde reload","urde set update_interval 4","urde set update_interval vanilla",
+                      "urdehint1 reload alpha 4","urdec reload alpha 4","other set"})
+        assert(commandMisuse(line,false).empty());
+    assert(commandMisuse("urdec set entity_shape circle",true).empty());
+    assert(commandMisuse("urdec set entity_shape square",true).empty());
     using movement::diagnostics::valueBucket;
     using movement::diagnostics::distanceBucket;
     assert(valueBucket(std::nullopt) == 0);
@@ -41,10 +53,11 @@ int main() {
     counters.finalIntervals[0][1][3].fetch_add(4);
     counters.leverOpened = 1; counters.leverCapped = 2;
     counters.leverFullRate = 3; counters.pairOverflow = 4;
+    counters.leverLate = 5;
     counters.reset();
     assert(counters.intervals[1][2][10] == 0 && counters.sendCalls[0] == 0 && counters.ticks == 0);
     assert(counters.finalIntervals[0][1][3] == 0 && counters.leverOpened == 0 && counters.leverCapped == 0);
-    assert(counters.leverFullRate == 0 && counters.pairOverflow == 0);
+    assert(counters.leverFullRate == 0 && counters.pairOverflow == 0 && counters.leverLate == 0);
     auto policy = movement::Settings::decode({{"full_rate_types",{"minecraft:villager"}},
                                               {"full_rate_tags",{"smooth"}}},4);
     assert(policy.updateInterval == 4 && policy.typeIds.contains("minecraft:villager"));
@@ -68,7 +81,32 @@ int main() {
         assert(!movement::decide(std::nullopt,100+n-1,100,n).interval);
         assert(movement::decide(std::nullopt,100+n,100,n).interval == n);
         assert(!movement::decide(std::nullopt,99,100,n).interval);
+        auto late = movement::decide(std::nullopt,100+n+2,100,n);
+        assert(late.interval == std::min(uint64_t(n+2),movement::OpenedPayloadCap) && late.late);
+        assert(late.outcome == movement::Outcome::opened);
+        assert(!movement::decide(std::nullopt,100+n,100,n).late);
     }
+    assert(movement::decide(std::nullopt,1000,1,4).interval == 10); // unknown policy: sane payload cap
+    assert(movement::decide(7,100,std::nullopt,4).interval == 4); // first send
+    assert(movement::decide(7,104,100,4).interval == 4); // on time
+    auto lateNative = movement::decide(7,106,100,4);
+    assert(lateNative.interval == 6 && lateNative.late && lateNative.outcome == movement::Outcome::capped);
+    lateNative = movement::decide(7,110,100,4);
+    assert(lateNative.interval == 7 && lateNative.late && lateNative.outcome == movement::Outcome::unchanged);
+    assert(movement::decide(0,110,100,4).interval == 0 && movement::decide(1,110,100,4).interval == 1);
+    assert(movement::decide(3,110,100,4).interval == 3); // preserve all native V<=N
+    assert(movement::decide(7,100,100,4).interval == 4); // repeated native engaged never delayed
+    assert(movement::decide(7,99,100,4).interval == 4); // no unsigned elapsed underflow
+    assert(movement::decide(std::nullopt,103,100,1).interval == 3); // full-rate but attempted late
+    assert(movement::decide(7,103,100,1).interval == 3);
+    assert(!movement::decide(7,200,100,0).late); // vanilla is fully unchanged/unobserved by lever
+    for (unsigned n = 1; n <= 10; ++n) for (uint64_t v = 0; v <= 15; ++v)
+        for (uint64_t gap = 0; gap <= 20; ++gap) {
+            auto result = movement::decide(v,100+gap,100,n);
+            assert(result.interval && *result.interval <= v); // native never slowed or withheld
+            assert(result.late == (gap > n));
+            assert((result.outcome == movement::Outcome::capped) == (*result.interval < v));
+        }
     auto noTypeQuery = []() -> std::string { assert(false); return {}; };
     auto noTagQuery = [](auto const&) -> bool { assert(false); return false; };
     policy.set("update_interval","vanilla");
@@ -127,6 +165,24 @@ int main() {
             }
         }
     }
+    // Sparse attempts: touch tracks visibility, sent tracks only engaged results.
+    // Payload follows the actual gap; the opening threshold is still N.
+    movement::PairTable<1> sparsePairs;
+    auto attempt = [&](uint64_t tick, std::optional<uint64_t> native) {
+        auto* record = sparsePairs.touch(10,20,tick);
+        assert(record);
+        auto result = movement::decide(native,tick,record->lastEngaged(),4);
+        if (result.interval) record->sent(tick);
+        return result;
+    };
+    assert(attempt(100,std::nullopt).interval == 4);
+    assert(!attempt(102,std::nullopt).interval);
+    auto sparseLate = attempt(106,std::nullopt);
+    assert(sparseLate.interval == 6 && sparseLate.late);
+    assert(attempt(107,1).interval == 1); // native faster send still resets last
+    assert(!attempt(110,std::nullopt).interval);
+    assert(attempt(111,std::nullopt).interval == 4);
+    assert(attempt(140,std::nullopt).interval == 10);
     // Publication pins the complete movement policy including prebuilt type IDs.
     auto movementFile = std::filesystem::current_path()/"build"/"checks"/"movement.json";
     auto clientJson = client::Settings{}.encode();

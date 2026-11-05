@@ -1,5 +1,7 @@
 #include "range/Side.h"
 #include "range/Commands.h"
+#include "range/CommandErrorOutput.h"
+#include "range/HintExperiments.h"
 #include "range/Config.h"
 #include "range/Limits.h"
 #include "range/Replication.h"
@@ -39,7 +41,7 @@ struct Config : replication::Range {
 };
 ConfigStore<Config> config;
 std::atomic<bool> enabled = false;
-ll::event::ListenerPtr commandListener, stopListener;
+ll::event::ListenerPtr commandListener, commandErrorListener, stopListener;
 bool installed = false;
 std::string describe(Config const& value) {
     return "actor_interest_chunks=" + rangeText(float(value.actorInterestChunks)) + " offsets="
@@ -58,6 +60,7 @@ void commands() {
     registerControls<UrdeServerKey,int>(command, status,
         [](auto const& key, auto const& value) { return config.change(key,value) + status(); },
         [] { return config.reload() + status(); });
+    hint::registerExperiments(ll::command::CommandRegistrar::getServerInstance(),false);
 }
 }
 bool load(std::filesystem::path const& dir) {
@@ -76,6 +79,7 @@ bool enable() {
     enabled = true;
     auto& bus = ll::event::EventBus::getInstance();
     commandListener = bus.emplaceListener<ll::event::ServerCommandRegisterEvent>([](auto&) { commands(); });
+    commandErrorListener = bus.emplaceListener<ll::event::ExecutedCommandEvent>([](auto& event) { explainCommandMisuse(event,false); });
     stopListener = bus.emplaceListener<ll::event::ServerStoppingEvent>([](auto&) { replication::invalidate(); config.clearEffective(); });
     if (ll::service::getCommandRegistry(false)) commands();
     return true;
@@ -86,8 +90,9 @@ bool disable() {
     config.clearEffective();
     auto& bus = ll::event::EventBus::getInstance();
     if (commandListener) bus.removeListener(commandListener);
+    if (commandErrorListener) bus.removeListener(commandErrorListener);
     if (stopListener) bus.removeListener(stopListener);
-    commandListener = stopListener = nullptr;
+    commandListener = commandErrorListener = stopListener = nullptr;
     installed = false;
     return true;
 }

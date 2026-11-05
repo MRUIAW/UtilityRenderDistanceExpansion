@@ -1,8 +1,9 @@
 # Implementation and acceptance
 
-Current movement implementation, caller map, command grammar, diagnostics and
-acceptance are documented in [0.3.0 movement notes](movement-0.3.0.md).
-The following 0.2.1/0.2.0 sections are historical and superseded there.
+Current movement rule and acceptance are in [0.3.1 movement notes](movement-0.3.1.md);
+current grammar and hint investigation are in [0.3.1 command notes](command-hints-0.3.1.md).
+The [0.3.0 movement notes](movement-0.3.0.md) retain the caller map and bounded
+pair-state evidence. The following 0.2.1/0.2.0 sections are historical.
 
 ## Historical 0.2.1 observation-only movement diagnostics
 
