@@ -1,4 +1,4 @@
-# UtilityRenderDistanceExpansion 0.3.1
+# UtilityRenderDistanceExpansion 0.3.2
 
 Windows x64 mod for Bedrock **1.26.60.05 (client) / BDS 1.26.60.2**, requiring
 **LeviLamina >=26.60.2 <26.61.0**. Independent
@@ -44,8 +44,8 @@ only and rejects `vanilla`; `entity_shape` accepts circle/square in its own row.
 Bare `set` and invalid action/shape arguments retain explanatory error messages
 after native syntax rejection.
 Client `update_interval` uses the float parser but requires a whole value (4.0 is
-accepted, 4.5 rejected). The missing `reload` grey hint reported with 0.3.0 remains
-under investigation; the exact client hint layout is not established by a build.
+accepted, 4.5 rejected). The client UI omits `reload` from the grey hint even
+though it is sent to the client; Tab still completes it and the command works.
 Server `/urde` still requires **GameDirectors** permission. Examples:
 
 ```text
@@ -115,8 +115,10 @@ each replication/collection cycle. No command-thread native member writes.
 
 ## Shapes and known limits
 
-**0.3.1 retains the 0.3.0 movement gate and accounts for late attempted sends.** The
-native helper runs first. For each stable sender/recipient ID pair, record the
+`update_interval` is the **far-movement update interval**, with defaults of
+**4 ticks on dedicated servers / 1 tick for local hosting**. The accepted
+real-elapsed payload accounts for late attempted sends without changing the
+opening threshold. The native helper runs first. For each stable sender/recipient ID pair, record the
 server tick of every final engaged result. With effective interval N:
 
 | Native result | Condition | Final result |
@@ -145,7 +147,8 @@ active target or one pending target; no growing queue was found statically.
 followed by waiting in the user's tests. 0.2.1 suspended that cap and measured a
 native far-actor gap around seven ticks. Earlier “send interval” claims for 0.2.0
 were incorrect. The user found 0.3.0 substantially smoother, with a slight hitch
-remaining outside vanilla; 0.3.1 addresses late gaps but needs live acceptance.
+remaining outside vanilla. The user accepted 0.3.1: no hitch at vanilla, 4, 2 or 1.
+0.3.2 retains that movement behavior unchanged.
 
 Missing movement keys receive side defaults. Missing `full_rate_types` alone
 defaults to `["minecraft:player"]`; explicit empty or nonempty lists replace it.
@@ -163,8 +166,8 @@ Apply list edits with `/urde reload` or `/urdec reload`. For example,
 movement rule selects N=1. `vanilla` disables both list overrides too.
 `status` includes the interval and both list sizes; client status
 also reports `hosting_movement(last_server_tick)` or `native/inactive`. These
-client keys live in `client.json`; hosting diagnostics run only in the matching
-in-process server tick. A remote-joined client cannot observe/control the remote
+client keys live in `client.json`; hosting movement applies only in the matching
+in-process server tick. A remote-joined client cannot control the remote
 server's interval hook; use the server build there.
 
 More frequent movement costs more packets: estimate roughly **+70% at N=4** and
@@ -173,32 +176,15 @@ actors. These are estimates, not measured bandwidth multipliers; packet size,
 compression, bypasses, TPS and recipient count matter. LAN guests incur network
 cost even when the host is local.
 
-Temporary counters produce at most one `[URDE temporary movement diagnostics]`
-line per two seconds after matching server ticks. For player/other senders and
-3D distance `<64`, `[64,128)`, `>=128`, both `native` and `FINAL` vectors count
-`nullopt,0,1,2,3,4,5-6,7,8-9,10,>10`. It also records `sendUpdate_calls` by sender
-kind, `lever_opened`, `lever_capped`, `lever_full_rate`, `lever_late`, `pair_overflow`, observed
-ticks/window milliseconds, and skipped invalid actor/distance
-reads. A sendUpdate call is an attempt and may produce zero or multiple packets;
-engaged results are gate outcomes, not delivery counts. See
-[current rule and interpretation](docs/movement-0.3.1.md) for details. The bounded
+See the [accepted movement rule](docs/movement-0.3.1.md) for details. The bounded
 65,536-slot pair table retains IDs/ticks only, expires unseen pairs after about
 10 seconds of server ticks, and clears on vanilla/exit/generation/disable.
 
-For the next live test, observe one continuously moving animal with one recipient
-at a distance where it is visibly ticking for **30 seconds per setting**, in
-resident chunks. The user's animal stopping around 160 blocks was attributed to
-server tick-distance; render/interest range does not extend simulation.
-Collect server logs for each segment (hosting: client LL log), status output and
-visual behavior; compare `vanilla`, 4, 2, 1, then add its exact type to
-`full_rate_types` and reload with N=4. Vanilla should have identical native/FINAL
-histograms and zero lever changes. Faster settings should show `lever_opened`,
-fewer FINAL nullopts, and mostly 4/2/1 payloads with longer late-gap payloads;
-`lever_late` counts engaged tracked gaps exceeding the selected N. Listed types should increment
-`lever_full_rate`. Check smoothness, lag, native prediction interaction and
-`pair_overflow=0`. Aggregates cannot prove delivery or exact pair cadence. Later
-repeat with a second player and check the player bins; also test lifecycle changes
-and root/key hints, invalid commands and persistence.
+The user's animal stopping around 160 blocks was attributed to server
+tick-distance; render/interest range does not extend simulation. **Players remain
+untested on this movement path: no second-player test has been performed.**
+Local hosting, lifecycle changes and native prediction interaction still need
+broader acceptance testing.
 
 - Server: horizontal chunk disk `dx*dx + dz*dz <= r*r`, no vertical cutoff.
   Radius 8 contains **197** offsets. Explicit vanilla uses the native **57**
@@ -222,8 +208,7 @@ and root/key hints, invalid commands and persistence.
    the owned player camera's final opaque/alpha component list and render-context
    target position. This fixes a statically proven native 64-block gate missed by
    the queue-only scope; the user confirmed chests visible to 128 in 0.1.2.
-   Shadows, UI/items, unrelated cameras and unscoped calls remain native. Temporary
-   queue/draw diagnostics and caller sampling were **removed in 0.1.3**. See the
+    Shadows, UI/items, unrelated cameras and unscoped calls remain native. See the
    [caller map and proof limits](docs/block-entity-0.1.2.md).
 - Enabled collectors ignore short fog limits; `vanilla` restores the native
   fog-limited collectors. **Visual fog is unchanged.**

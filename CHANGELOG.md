@@ -1,10 +1,17 @@
 # Changelog
 
+## [0.3.2]
+
+- Remove all temporary command-hint roots, registry/AvailableCommands audits, their header, and the build option/define. Keep the accepted real command usage and error messages unchanged.
+- Remove movement diagnostic logging, counters, histograms, attempt counts and diagnostic-only position/distance reads. Retain the signature-asserted sendUpdate scope hook required by the lever, with unchanged guards, elapsed-gap decision, pair table, pruning and native fallback on saturation; no replacement warning.
+- Record accepted 0.3.1 live results and the client UI hint limit; preserve defaults, configuration, permissions and persistence. Players remain untested on this path without a second-player test.
+
 ## [0.3.1]
 
+- Accepted live: no movement hitch at vanilla, 4, 2 or 1. The 08:18–08:35 log showed late gaps on roughly 7% of openings (example minute: 29,905 opened / 1,764 late), with pair_overflow=0. All six hint styles showed only set/status in grey text while Tab completed reload; the serialized packet retained reload. The omission is a client UI limit, not a registration fix to pursue.
 - Preserve eligible movement gate timing while using elapsed ticks for late interpolation payloads: nullopt openings cap at 10; engaged V>N returns min(V,max(N,elapsed)); native V<=N and vanilla remain unchanged. Add lever_late without changing existing counter meanings, and cover sparse attempts and payload invariants in pure checks.
 - Use literal status/reload/set and compact named setting enums in real usage, server integer/client float values and a separate client entity_shape row. Retain validation, persistence and GameDirectors permission; add the existing misuse explanations after native rejection without extra usage rows.
-- Add six temporary echo-only command-hint styles per side behind one compile-time option, with registry and serialized AvailableCommands audits. Document source/native syntax evidence and the still-unproven Windows reload-hint cause under docs; live comparison remains necessary.
+- Add six temporary echo-only command-hint styles per side behind one compile-time option, with registry and serialized AvailableCommands audits. Document source/native syntax evidence under docs; the subsequent live comparison established the client UI limit above. Probes and diagnostics are removed in 0.3.2.
 
 ## [0.3.0]
 

@@ -1,5 +1,22 @@
 # 0.3.1 elapsed-gap movement payloads
 
+## Accepted live result and 0.3.2 cleanup
+
+The user accepted 0.3.1: **no hitch at vanilla, 4, 2 or 1**. The 08:18–08:35 log
+showed `lever_late` at about 7% of `lever_opened` (example minute: 29,905 opened,
+1,764 late), with `pair_overflow=0`. This is live acceptance of the moving-animal
+case; players remain untested on this path because no second player was tested.
+
+0.3.2 removes all movement diagnostic counters, histograms, periodic output,
+sendUpdate attempt counting and diagnostic-only position/distance reads. The
+accepted decision below, pair table, pruning, guards and returned values are
+unchanged. The signature-asserted `sendUpdate` hook remains as `SendUpdateScope`
+because the lever requires its receiver/tick scope. Saturation still falls back
+to native; no counter or replacement warning remains. Diagnostic descriptions
+below are historical 0.3.1 evidence, not facilities present in 0.3.2.
+
+## Accepted decision
+
 The user found 0.3.0 much smoother, with a slight hitch remaining for nonvanilla
 settings. Its gate opens on attempted ticks, so actual gaps can exceed configured
 N. Writing fixed N then finishes interpolation before the next attempted send.
@@ -37,12 +54,14 @@ max(3,mTicks) interpolation floor and active/one-pending target replacement
 remain relevant; no growing queue was found. A payload cap cannot guarantee
 continuous movement across every long gap or native bypass.
 
-`lever_opened` still counts nullopt-to-engaged changes; `lever_capped` counts only
-actual native payload reductions; `lever_full_rate` counts changed decisions
-selected by a listed type/tag. New `lever_late` counts tracked FINAL engaged
+## Historical 0.3.1 diagnostics (removed in 0.3.2)
+
+`lever_opened` counted nullopt-to-engaged changes; `lever_capped` counted only
+actual native payload reductions; `lever_full_rate` counted changed decisions
+selected by a listed type/tag. `lever_late` counted tracked FINAL engaged
 results with elapsed>N, including unchanged faster native values. First results,
-vanilla, untracked overflow and nullopt results do not count as late. Counter
-collection/reset uses the existing relaxed atomics and two-second report limit:
+vanilla, untracked overflow and nullopt results did not count as late. Counter
+collection/reset used relaxed atomics and a two-second report limit:
 
 ```text
 ... native=... FINAL=... lever_opened=... lever_capped=... lever_full_rate=... lever_late=... pair_overflow=... sendUpdate_calls=... skipped=...
@@ -56,7 +75,9 @@ Existing configuration, list selection, lifecycle/scope, bounded-table and
 persistence checks remain included. These verify arithmetic/state, not delivery
 or visual acceptance.
 
-For live acceptance, keep one continuously moving animal inside resident,
+## Historical acceptance procedure
+
+The original 0.3.1 procedure was to keep one continuously moving animal inside resident,
 actively ticking chunks and one recipient; compare vanilla,4,2,1 for 30 seconds
 each, then exact type/tag selection with global N=4. Collect status, logs and
 visual observations. Expect unchanged native/FINAL under vanilla, opened/capped

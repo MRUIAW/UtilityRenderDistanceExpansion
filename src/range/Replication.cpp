@@ -2,7 +2,6 @@
 #include "range/Limits.h"
 #include "range/Scope.h"
 #include "range/HookInstall.h"
-#include "range/MovementDiagnostics.h"
 #include "range/MovementPairs.h"
 #include "ll/api/memory/Hook.h"
 #include "ll/api/service/Bedrock.h"
@@ -15,8 +14,6 @@
 #include "mc/network/SpatialActorNetworkData.h"
 #include "mc/world/actor/Actor.h"
 #include "mc/world/actor/player/Player.h"
-#include <array>
-#include <chrono>
 
 namespace urde::replication {
 namespace {
@@ -71,63 +68,19 @@ static_assert(std::is_same_v<decltype(&Level::getSortedPositionsFromClientOffset
 static_assert(std::is_same_v<decltype(&Level::$getSortedPositionsFromClientOffsets), Sorted>);
 static_assert(std::is_same_v<decltype(&ChunkTickOffsetManager::getSortedPositionsFromClientOffsets), Expand>);
 
-// BEGIN temporary movement diagnostics (extended in 0.3.0). Collection uses only
-// relaxed atomics; the lever separately mutates tick-confined stable-ID records.
-movement::diagnostics::Counters diagnostics;
-auto lastDiagnostics = std::chrono::steady_clock::now();
-uint64_t diagnosticsGeneration = UINT64_MAX; // matching owner tick only
-bool diagnosticsActive() {
+bool movementActive() {
     return enabled && tickContext && tickContext->generation == generation;
 }
-bool diagnosticsActor(Actor const& actor) {
+bool matchingActor(Actor const& actor) {
     return !actor.mRemoved && actor.mLevel && &actor.getLevel() == tickContext->level;
-}
-void reportDiagnostics() {
-    auto now = std::chrono::steady_clock::now();
-    if (now-lastDiagnostics < std::chrono::seconds(2)) return;
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now-lastDiagnostics).count();
-    lastDiagnostics = now;
-    auto take = [](auto& count) { return count.exchange(0,std::memory_order_relaxed); };
-    auto histogram = [&](auto& values) {
-        std::string histograms;
-        for (size_t sender = 0; sender < 2; ++sender) {
-            histograms += sender == 0 ? " player={" : " other={";
-            for (size_t distance = 0; distance < 3; ++distance) {
-                if (distance) histograms += ',';
-                histograms += std::array{"lt64:[","64to128:[","ge128:["}[distance];
-                for (size_t value = 0; value < 11; ++value) {
-                    if (value) histograms += ',';
-                    histograms += std::to_string(take(values[sender][distance][value]));
-                }
-                histograms += ']';
-            }
-            histograms += '}';
-        }
-        return histograms;
-    };
-    auto native = histogram(diagnostics.intervals);
-    auto final = histogram(diagnostics.finalIntervals);
-    UrdeMod::getInstance().getSelf().getLogger().info(
-        "[URDE temporary movement diagnostics] window_ms={} ticks={} bins=nullopt,0,1,2,3,4,5-6,7,8-9,10,>10 native={} FINAL={} lever_opened={} lever_capped={} lever_full_rate={} lever_late={} pair_overflow={} sendUpdate_calls={{player:{},other:{}}} skipped={{interval:{},sendUpdate:{}}}",
-        elapsed,take(diagnostics.ticks),native,final,take(diagnostics.leverOpened),take(diagnostics.leverCapped),
-        take(diagnostics.leverFullRate),take(diagnostics.leverLate),take(diagnostics.pairOverflow),take(diagnostics.sendCalls[0]),take(diagnostics.sendCalls[1]),
-        take(diagnostics.skippedInterval),take(diagnostics.skippedSend));
 }
 
 LL_TYPE_INSTANCE_HOOK(UpdateInterval, ll::memory::HookPriority::Normal, SpatialActorNetworkData,
     &SpatialActorNetworkData::_getOptimizationUpdateInterval, std::optional<uint64>, Player& player) {
     auto native = origin(player);
-    if (!diagnosticsActive()) return native;
+    if (!movementActive()) return native;
     auto& actor = mEntity;
-    if (!diagnosticsActor(actor) || !diagnosticsActor(player)) {
-        diagnostics.skippedInterval.fetch_add(1,std::memory_order_relaxed);
-        return native;
-    }
-    auto const& sender = actor.getPosition();
-    auto const& recipient = player.getPosition();
-    auto distance = movement::diagnostics::distanceBucket(
-        double(sender.x)-recipient.x,double(sender.y)-recipient.y,double(sender.z)-recipient.z);
-    auto senderKind = actor.isPlayer() ? 0 : 1;
+    if (!matchingActor(actor) || !matchingActor(player)) return native;
     auto final = native;
     auto* send = sendContext;
     auto const& settings = tickContext->snapshot->movement;
@@ -143,38 +96,21 @@ LL_TYPE_INSTANCE_HOOK(UpdateInterval, ll::memory::HookPriority::Normal, SpatialA
             auto decision = movement::decide(native,send->now,record->lastEngaged(),send->selection->interval);
             final = decision.interval;
             if (final) record->sent(send->now);
-            if (decision.late) diagnostics.leverLate.fetch_add(1,std::memory_order_relaxed);
-            if (decision.outcome == movement::Outcome::opened) diagnostics.leverOpened.fetch_add(1,std::memory_order_relaxed);
-            if (decision.outcome == movement::Outcome::capped) diagnostics.leverCapped.fetch_add(1,std::memory_order_relaxed);
-            if (decision.outcome != movement::Outcome::unchanged && send->selection->fullRate)
-                diagnostics.leverFullRate.fetch_add(1,std::memory_order_relaxed);
-        } else diagnostics.pairOverflow.fetch_add(1,std::memory_order_relaxed);
+        } // Saturated bucket: retain the native result, never evict a live pair.
     }
-    if (distance) {
-        diagnostics.intervals[senderKind][*distance][movement::diagnostics::valueBucket(native)]
-            .fetch_add(1,std::memory_order_relaxed);
-        diagnostics.finalIntervals[senderKind][*distance][movement::diagnostics::valueBucket(final)]
-            .fetch_add(1,std::memory_order_relaxed);
-    } else diagnostics.skippedInterval.fetch_add(1,std::memory_order_relaxed);
     return final;
 }
 
-LL_TYPE_INSTANCE_HOOK(ObserveSendUpdate, ll::memory::HookPriority::Normal, SpatialActorNetworkData,
+LL_TYPE_INSTANCE_HOOK(SendUpdateScope, ll::memory::HookPriority::Normal, SpatialActorNetworkData,
     &SpatialActorNetworkData::sendUpdate, void,
     bool forceMove, bool forceMoveLocalEntity, bool forceAbsoluteMovement, bool forceCompletion) {
-    bool valid = diagnosticsActive() && diagnosticsActor(mEntity);
+    bool valid = movementActive() && matchingActor(mEntity);
     SendContext context{this,tickContext,valid ? tickContext->level->getCurrentTick().tickID : 0,{}};
     Scope scope(sendContext,valid ? &context : nullptr);
-    if (diagnosticsActive()) {
-        auto& actor = mEntity;
-        if (diagnosticsActor(actor)) diagnostics.sendCalls[actor.isPlayer() ? 0 : 1].fetch_add(1,std::memory_order_relaxed);
-        else diagnostics.skippedSend.fetch_add(1,std::memory_order_relaxed);
-    }
     // Multiple native callers are safe: all flags forwarded, exactly one origin;
     // calls may yield zero/multiple recipient packets and are not deliveries.
     origin(forceMove,forceMoveLocalEntity,forceAbsoluteMovement,forceCompletion);
 }
-// END temporary movement diagnostics
 
 LL_TYPE_INSTANCE_HOOK(LevelTick, ll::memory::HookPriority::Normal, Level, &Level::$tick, void) {
     auto* level = thisFor<Level>();
@@ -198,21 +134,15 @@ LL_TYPE_INSTANCE_HOOK(LevelTick, ll::memory::HookPriority::Normal, Level, &Level
     pairs->vanilla = !snapshot->movement.updateInterval;
     TickContext context{level, epoch, std::move(snapshot),std::move(pairs)};
     Scope scope(tickContext, &context);
-    if (diagnosticsGeneration != epoch) {
-        diagnosticsGeneration = epoch;
-        lastDiagnostics = std::chrono::steady_clock::now();
-    }
     radius = context.snapshot->actorInterestChunks;
     observedGeneration = epoch;
     observedPolicy.store(context.snapshot);
-    diagnostics.ticks.fetch_add(1,std::memory_order_relaxed);
     origin();
     auto now = level->getCurrentTick().tickID;
     if (now < context.pairs->pruned || now-context.pairs->pruned >= 20) {
         context.pairs->table.prune(now);
         context.pairs->pruned = now;
     }
-    if (enabled && epoch == generation) reportDiagnostics();
 }
 LL_TYPE_INSTANCE_HOOK(Replication, ll::memory::HookPriority::Normal, ActorReplication,
     &ActorReplication::processReplicationForPlayers, void,
@@ -267,7 +197,7 @@ bool enable(Provider provider) {
     if (!installHook<UpdateInterval>("SpatialActorNetworkData::_getOptimizationUpdateInterval")) {
         SortedPositions::unhook(); Replication::unhook(); LevelTick::unhook(); return false;
     }
-    if (!installHook<ObserveSendUpdate>("SpatialActorNetworkData::sendUpdate")) {
+    if (!installHook<SendUpdateScope>("SpatialActorNetworkData::sendUpdate")) {
         UpdateInterval::unhook(); SortedPositions::unhook(); Replication::unhook(); LevelTick::unhook(); return false;
     }
     installed = true;
@@ -278,7 +208,6 @@ bool enable(Provider provider) {
 void invalidate() {
     ++generation; radius = 0; observedPolicy.store(nullptr);
     pairState.store(nullptr);
-    diagnostics.reset();
 }
 bool active() { return enabled && observedGeneration == generation; }
 int effectiveRadius() { return observedGeneration == generation ? radius.load() : 0; }
@@ -289,6 +218,6 @@ std::string effectiveMovement() {
 void disable() {
     enabled = false;
     invalidate();
-    if (installed) { ObserveSendUpdate::unhook(); UpdateInterval::unhook(); SortedPositions::unhook(); Replication::unhook(); LevelTick::unhook(); installed = false; }
+    if (installed) { SendUpdateScope::unhook(); UpdateInterval::unhook(); SortedPositions::unhook(); Replication::unhook(); LevelTick::unhook(); installed = false; }
 }
 }

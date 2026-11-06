@@ -2,7 +2,7 @@ includes("symbol_missing.lua")
 add_rules("mode.debug", "mode.release")
 
 -- Single version constant; keep tooth.json in sync.
-local urde_version = "0.3.1"
+local urde_version = "0.3.2"
 set_version(urde_version)
 
 add_repositories("levimc-repo https://github.com/LiteLDev/xmake-repo.git")
@@ -11,12 +11,6 @@ option("target_type")
     set_default("server")
     set_showmenu(true)
     set_values("server", "client")
-option_end()
-
--- Temporary command-hint experiment; one switch removes all probe roots.
-option("urde_hint_experiment")
-    set_default(true)
-    set_showmenu(true)
 option_end()
 
 -- add_requires("levilamina x.x.x") for a specific version
@@ -32,9 +26,6 @@ if not has_config("vs_runtime") then
 end
 
 target("UtilityRenderDistanceExpansion")
-    if has_config("urde_hint_experiment") then
-        add_defines("URDE_HINT_EXPERIMENT")
-    end
     add_rules("symbol_missing")
     add_rules("@levibuildscript/linkrule")
     add_rules("@levibuildscript/modpacker", {modVersion = urde_version})

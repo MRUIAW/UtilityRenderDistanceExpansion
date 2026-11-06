@@ -1,7 +1,6 @@
 #include "range/Side.h"
 #include "range/Commands.h"
 #include "range/CommandErrorOutput.h"
-#include "range/HintExperiments.h"
 #include "range/Config.h"
 #include "range/Limits.h"
 #include "range/Scope.h"
@@ -341,7 +340,6 @@ void commands() {
     registerControls<UrdeClientKey,float>(command,status,
         [](auto const& key, auto const& value) { return config.change(key,value) + status(); },
         [] { return config.reload() + status(); });
-    hint::registerExperiments(ll::command::CommandRegistrar::getClientInstance(),true);
 }
 }
 bool load(std::filesystem::path const& dir) {

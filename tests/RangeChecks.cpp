@@ -3,7 +3,6 @@
 #include "range/Config.h"
 #include "range/CommandValues.h"
 #include "range/CommandErrors.h"
-#include "range/MovementDiagnostics.h"
 #include "range/MovementPairs.h"
 #include "client/ClientConfig.h"
 #include <cassert>
@@ -32,32 +31,10 @@ int main() {
     assert(commandMisuse("urdec set entity_shape vanilla",true) == "vanilla is not supported for entity_shape");
     assert(commandMisuse("urdec set entity_range square",true) == "circle/square require entity_shape");
     for (auto line : {"urde status","urde reload","urde set update_interval 4","urde set update_interval vanilla",
-                      "urdehint1 reload alpha 4","urdec reload alpha 4","other set"})
+                      "urdec reload alpha 4","other set"})
         assert(commandMisuse(line,false).empty());
     assert(commandMisuse("urdec set entity_shape circle",true).empty());
     assert(commandMisuse("urdec set entity_shape square",true).empty());
-    using movement::diagnostics::valueBucket;
-    using movement::diagnostics::distanceBucket;
-    assert(valueBucket(std::nullopt) == 0);
-    std::array<size_t,13> expectedBins{1,2,3,4,5,6,6,7,8,8,9,10,10};
-    for (uint64_t i = 0; i < expectedBins.size(); ++i) assert(valueBucket(i) == expectedBins[i]);
-    assert(valueBucket(UINT64_MAX) == 10);
-    assert(distanceBucket(0,63.999,0) == 0 && distanceBucket(0,64,0) == 1);
-    assert(distanceBucket(0,127.999,0) == 1 && distanceBucket(0,128,0) == 2);
-    assert(distanceBucket(48,48,0) == 1); // true 3D distance, no horizontal-only shortcut
-    assert(!distanceBucket(std::numeric_limits<double>::quiet_NaN(),0,0));
-    movement::diagnostics::Counters counters;
-    counters.intervals[1][2][10].fetch_add(3);
-    counters.sendCalls[0].fetch_add(2);
-    counters.ticks.fetch_add(40);
-    counters.finalIntervals[0][1][3].fetch_add(4);
-    counters.leverOpened = 1; counters.leverCapped = 2;
-    counters.leverFullRate = 3; counters.pairOverflow = 4;
-    counters.leverLate = 5;
-    counters.reset();
-    assert(counters.intervals[1][2][10] == 0 && counters.sendCalls[0] == 0 && counters.ticks == 0);
-    assert(counters.finalIntervals[0][1][3] == 0 && counters.leverOpened == 0 && counters.leverCapped == 0);
-    assert(counters.leverFullRate == 0 && counters.pairOverflow == 0 && counters.leverLate == 0);
     auto policy = movement::Settings::decode({{"full_rate_types",{"minecraft:villager"}},
                                               {"full_rate_tags",{"smooth"}}},4);
     assert(policy.updateInterval == 4 && policy.typeIds.contains("minecraft:villager"));

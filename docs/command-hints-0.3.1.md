@@ -1,5 +1,19 @@
 # 0.3.1 command hints: evidence and temporary comparison
 
+## Accepted live result; experiment removed in 0.3.2
+
+The user tested all six styles: each grey hint showed only `set` and `status`,
+while Tab still completed `reload`. The packet audit retained `reload`
+(`urdehint5 row=3 column=0 name=reload`). **Conclusion: the client UI hides
+`reload` from the grey hint although it is serialized to the client; changing
+registration style did not fix it.** The user accepts the real usage below.
+
+0.3.2 removes every probe root, `HintExperiments.h`, the registry/packet audit,
+and the xmake option/define. The following investigation and test instructions
+are a historical record of 0.3.1, not commands or options available in 0.3.2.
+
+## Original investigation
+
 The user reports that 0.3.0 still omits `reload` from the grey hint after `/urde `.
 The exact Windows client cause remains **unproven**. Neither a successful build
 nor an enum containing three strings proves that all three are displayed.
@@ -76,8 +90,8 @@ Audit failures log a warning without preventing real command registration.
 
 ## Real commands
 
-No winning style is claimed before comparison. Registration is centralized in
-`registerControls` so actions can be swapped after live evidence. Current rows:
+No style fixed the grey hint omission. The literal registration centralized in
+`registerControls` is accepted and unchanged in 0.3.2. Real rows:
 
 ```text
 /urde status

@@ -1,5 +1,12 @@
 # Implementation and acceptance
 
+0.3.2 removes the 0.3.1 hint probes/audits and movement diagnostics after live
+acceptance, without changing the real grammar or movement decision. The shared
+hook set remains Level tick, actor replication, sorted positions, movement
+interval and sendUpdate scope (all with signature asserts). The client also
+retains the six signature-asserted collection/draw/detail hooks. sendUpdate is
+not observation-only: its receiver/current-tick scope is required by the lever.
+
 Current movement rule and acceptance are in [0.3.1 movement notes](movement-0.3.1.md);
 current grammar and hint investigation are in [0.3.1 command notes](command-hints-0.3.1.md).
 The [0.3.0 movement notes](movement-0.3.0.md) retain the caller map and bounded
