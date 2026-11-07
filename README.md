@@ -1,4 +1,4 @@
-# UtilityRenderDistanceExpansion 1.0.0
+# UtilityRenderDistanceExpansion
 
 A [LeviLamina](https://github.com/LiteLDev/LeviLamina) mod for Minecraft Bedrock that lets players see and shoot
 actors, see block entities and keep terrain detail **farther than vanilla**, and makes
