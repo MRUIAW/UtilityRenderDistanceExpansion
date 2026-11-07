@@ -1,33 +1,54 @@
-# UtilityRenderDistanceExpansion 0.3.2
+# UtilityRenderDistanceExpansion 1.0.0
 
-Windows x64 mod for Bedrock **1.26.60.05 (client) / BDS 1.26.60.2**, requiring
-**LeviLamina >=26.60.2 <26.61.0**. Independent
-server actor-interest expansion and client entity/block-entity collection, plus
-one **experimental** shared terrain-detail distance. No fog, fancy-leaves,
-view-distance, tick-distance, chunk-publishing or chunk-loading changes.
+A [LeviLamina](https://github.com/LiteLDev/LeviLamina) mod for Minecraft Bedrock that lets players see and shoot
+actors, see block entities and keep terrain detail **farther than vanilla**, and makes
+distant movement smooth. It has a **server build** (dedicated server) and a
+**client build** (also covers single-player and LAN hosting).
 
-## Commands and configuration
+- Game: Bedrock **1.26.60** (client 1.26.60.05, BDS 1.26.60.2), Windows x64.
+- Requires **LeviLamina `>=26.60.2 <26.61.0`**.
+- License: LGPL-3.0.
 
-| Side / command root | Key | Default | Allowed |
-|---|---|---|---|
-| Server `/urde` (operator/console) | `actor_interest_chunks` | `32` chunks | whole `1..32` or `vanilla` |
-| Client-local `/urdec` | `entity_range` | `512` blocks | positive, finite `<=512` or `vanilla` |
-| Client-local `/urdec` | `block_entity_range` | `512` blocks | positive, finite `<=512` or `vanilla` |
-| Client-local `/urdec` | `terrain_detail` | `512` blocks | positive, finite `<=512` or `vanilla` |
-| Client-local `/urdec` | `entity_shape` | `circle` | `circle` or `square` |
-| Client-local `/urdec` | `replication_margin` | `16` blocks | finite `0..512`, subject to the local 34-chunk disk limit |
-| Server `/urde` | `update_interval` | `4` ticks | whole `1..10` or `vanilla` |
-| Client hosting `/urdec` | `update_interval` | `1` tick | whole `1..10` or `vanilla` |
-| Both (file only, then reload) | `full_rate_types` | `["minecraft:player"]` | list of exact type IDs, e.g. `minecraft:villager` |
-| Both (file only, then reload) | `full_rate_tags` | `[]` | list of exact vanilla `/tag` names |
+## What it does
 
-Commands (angle brackets are parameters):
+| Feature | Side | Default |
+|---|---|---|
+| Send actors to players from farther away (replication range) | server, and the client when it hosts a world | 32 chunks (512 blocks) |
+| Draw actors farther away | client | 512 blocks |
+| Draw block entities (chests, signs, ...) farther away | client | 512 blocks |
+| Keep vegetation, leaves and glass at high detail farther away (**experimental**) | client | 512 blocks |
+| Update distant moving actors more often, with matching interpolation | server, and the client when it hosts a world | 4 ticks (server), 1 tick (hosting) |
+
+It does not change fog, fancy leaves, view distance, tick distance, chunk loading or
+shadows. Actors only move inside the server's simulation range (`tick-distance`).
+
+## Install
+
+Use `lip` with `tooth.json`, or copy the folder by hand.
+
+| Build | Copy `UtilityRenderDistanceExpansion/` to |
+|---|---|
+| Dedicated server | `<server>/mods/UtilityRenderDistanceExpansion/` |
+| Client | `<game instance>/mods/UtilityRenderDistanceExpansion/` |
+
+Run the server build on the server and the client build on every player who wants
+the client features. For single-player or LAN hosting you only need the **client**
+build: its in-process server uses the same settings as the client.
+
+Each build creates its own config file in the mod's `config/` folder on first start:
+`server.json` or `client.json`.
+
+## Commands
+
+Server: `/urde` (needs operator / GameDirectors permission). Client: `/urdec`
+(local to your game, no permission needed).
 
 ```text
 /urde status
 /urde reload
 /urde set <setting: setting> [value: int]
 /urde set <setting: setting> vanilla
+
 /urdec status
 /urdec reload
 /urdec set <setting: setting> [value: float]
@@ -35,200 +56,71 @@ Commands (angle brackets are parameters):
 /urdec set entity_shape <circle|square>
 ```
 
-Actions are literal words. The short `setting` enum keeps the key list out of
-usage while retaining key completion after `set `. These are **four server rows /
-five client rows**. The numeric value is optional in the grammar so a missing
-value receives a clear error; a successful `set` still requires it.
-`status`/`reload` accept no extra arguments. `replication_margin` accepts numbers
-only and rejects `vanilla`; `entity_shape` accepts circle/square in its own row.
-Bare `set` and invalid action/shape arguments retain explanatory error messages
-after native syntax rejection.
-Client `update_interval` uses the float parser but requires a whole value (4.0 is
-accepted, 4.5 rejected). The client UI omits `reload` from the grey hint even
-though it is sent to the client; Tab still completes it and the command works.
-Server `/urde` still requires **GameDirectors** permission. Examples:
+`set` takes effect on the next tick and is saved to the config file. `vanilla`
+restores the native behaviour for that setting. `reload` re-reads the config file; if
+the file is invalid the old settings stay. Changes are limited to one per second.
+The in-game grey syntax hint does not list `reload`, but Tab completes it and it works.
 
-```text
-/urde set actor_interest_chunks 8
-/urde set actor_interest_chunks vanilla
-/urdec set entity_range 128
-/urdec set entity_shape circle
-/urdec set replication_margin 16
-/urdec set block_entity_range 128
-/urdec set terrain_detail vanilla
-/urdec status
-/urdec reload
+### Settings
+
+| Command | Setting | Default | Allowed | What it controls |
+|---|---|---|---|---|
+| `/urde` | `actor_interest_chunks` | 32 | whole 1..32, or `vanilla` | How far (in chunks) the server sends actors to each player. Vanilla is a fixed 57-chunk pattern, about 70 blocks. |
+| `/urde` | `update_interval` | 4 | whole 1..10, or `vanilla` | Minimum ticks between movement updates for distant actors (see below). |
+| `/urdec` | `entity_range` | 512 | 1..512, or `vanilla` | How far actors are drawn. |
+| `/urdec` | `block_entity_range` | 512 | 1..512, or `vanilla` | How far block entities are drawn. |
+| `/urdec` | `terrain_detail` | 512 | 1..512, or `vanilla` | Distance up to which vegetation, leaves and raster glass keep high detail. **Experimental.** |
+| `/urdec` | `entity_shape` | circle | `circle`, `square` | `circle` draws actors within a horizontal circle of `entity_range`; `square` uses a cube. |
+| `/urdec` | `replication_margin` | 16 | 0..512 | Extra blocks of replication beyond `entity_range` when you host a world. |
+| `/urdec` | `update_interval` | 1 | whole 1..10, or `vanilla` | Same as the server setting, for the world you host. |
+
+Both sides also read two lists from their config file (edit the file, then `reload`):
+
+- `full_rate_types`: entity type ids that always use the fastest update rate. Default `["minecraft:player"]` (only used when the key is missing).
+- `full_rate_tags`: actors with one of these `/tag` names always use the fastest update rate. Default `[]`.
+
+Example `server.json`:
+
+```json
+{"actor_interest_chunks":32,"update_interval":4,"full_rate_types":["minecraft:player","minecraft:villager"],"full_rate_tags":["fullrate"]}
 ```
 
-For local-world/LAN hosting, the client derives an integer chunk disk covering
-the horizontal circle of radius `entity_range + replication_margin` around the
-player, even when the player and replicated chunk centers are at chunk edges. For
-offset `(x,z)`, the closest chunk-center displacement on each axis is
-`max(16*|offset|-8, 0)`. Include offsets when the squared combined displacement
-is `<= (entity_range+replication_margin)²`; the derived radius is the smallest
-integer disk containing those offsets. At the default `512 + 16` this gives
-**34 chunks / 3625 offsets**; at `128 + 16` it gives 10 chunks / 317 offsets. The disk is limited to 34 chunks; combinations
-exceeding that are rejected. Old files with `entity_range=512` still load with the
-16-block default. For `entity_range=vanilla` the native offsets are retained.
-
-If the derived disk is not a superset of native 57 offsets (`dx²+dz² <=17`),
-native offsets are retained instead. The margin is a horizontal circle for **both**
-entity shapes; it does not cover square-mode corners. The shared replication hooks
-stay native on remote servers: on a dedicated server, use an `entity_range` somewhat
-below its actor-interest range for a similar edge margin. Dedicated `/urde` remains
-independent and still permits radii 1–32 or `vanilla`. Chunk residency, network
-policy and other server limits remain in force.
-
-`/urdec status` reports the derived radius/count, the chosen disk/count (57 when
-native), the last-server-tick radius and `hosting_replication_active` (a matching
-server tick in the current session generation; remains true for a paused host until
-lifecycle invalidation). At the defaults it includes
-`entity_shape=circle replication_margin=16 ... local_replication=34 ... derived_chunks=34 derived_offsets=3625 ... local_replication_offsets=3625`.
-
-`server.json` and `client.json` live in LL's mod **config directory**, resolved
-through `NativeMod::getConfigDir()`. The relevant file is created on first load.
-Client JSON requires the original three range keys, with `entity_shape` and
-`replication_margin` optional for old files; missing new keys default to `circle`
-and `16`. Use the string `"vanilla"`, not zero/null, for the range keys. The margin
-is a number and can be zero.
-Legacy camelCase keys still load as fallbacks (mixed old/new keys for different
-settings are allowed); **both spellings of the same key are rejected** with an
-explicit ambiguous-config error. Loading does not rewrite the file. The next
-successful `set`/`reload` save writes only snake_case keys.
-For example, the default client file is:
+Example `client.json`:
 
 ```json
 {"entity_range":512,"block_entity_range":512,"terrain_detail":512,"entity_shape":"circle","replication_margin":16,"update_interval":1,"full_rate_types":["minecraft:player"],"full_rate_tags":[]}
 ```
 
-`set` persists the whole validated candidate using temporary-file replacement,
-then atomically publishes an immutable requested snapshot. `reload` validates the
-whole disk file; malformed/unknown/missing keys, nonfinite/out-of-bounds values,
-or persistence failure retain the old snapshot. Changes are limited to one per
-second. Status distinguishes requested from the last owner-tick effective
-snapshot; these are **policy values, not a guarantee of final visibility**.
-Menu changes are saved without dereferencing a world and apply on the next world
-tick. Replication application, including the in-process server, occurs in a scoped
-server Level tick; client collection application and
-active-camera native refresh occur on the client tick. One snapshot is pinned for
-each replication/collection cycle. No command-thread native member writes.
+## How the ranges work together
 
-## Shapes and known limits
+**Actors** need two things: the server must send them (`actor_interest_chunks`), and
+the client must draw them (`entity_range`). The result is the smaller of the two.
+When you play on a dedicated server, set `entity_range` a little below the server's
+range so actors near the edge do not freeze before they disappear. When you host a
+world yourself, the client derives the server range from `entity_range +
+replication_margin` automatically, and never uses less than vanilla.
 
-`update_interval` is the **far-movement update interval**, with defaults of
-**4 ticks on dedicated servers / 1 tick for local hosting**. The accepted
-real-elapsed payload accounts for late attempted sends without changing the
-opening threshold. The native helper runs first. For each stable sender/recipient ID pair, record the
-server tick of every final engaged result. With effective interval N:
+**Block entities** (`block_entity_range`) and **terrain detail** (`terrain_detail`)
+are client-only; the server does not need to do anything, but the chunks must be
+loaded (server `view-distance`).
 
-| Native result | Condition | Final result |
-|---|---|---|
-| nullopt | no record | engaged N |
-| nullopt | elapsed >= N | engaged clamp(elapsed, 1, 10) |
-| nullopt | elapsed < N | nullopt |
-| engaged V | V > N | engaged min(V, max(N, elapsed)) |
-| engaged V | V <= N | unchanged V |
-| any | vanilla / outside matching server tick and sendUpdate | unchanged |
+**Smooth distant movement.** Vanilla sends far-away actors about every 7 ticks and
+tells the client to glide over that time. `update_interval` makes the server send
+sooner (never later), and the packet tells the client the real time since the
+previous update, so the motion stays smooth. Lower values mean smoother and more
+accurate positions but more network traffic. Estimate for distant moving actors:
+about +70% packets at 4, about 6x at 1, compared with vanilla. Values at or above the
+native interval (about 7) change nothing. Players use the fastest rate if
+`minecraft:player` is in `full_rate_types`.
 
-N defaults to dedicated **4**, hosting **1**; exact listed types/tags select **1**.
-Without a record, engaged V>N uses N; V<=N always survives unchanged. Every
-final engaged result records the current tick. A late send thus gets a payload
-matching its actual gap, bounded by native V when engaged or 10 ticks when
-opening nullopt. Ten is a conservative half-second payload limit at 20 TPS,
-not a recovered hidden native policy. The opening threshold remains N.
-This only speeds eligible updates: N at or above the native policy has no steady
-cadence effect, apart from the initial no-record opening. Native faster values
-survive. It is not a guaranteed heartbeat: change detection, recipient membership,
-teleports, prediction and other native routes remain. Windows interpolation uses
-`max(3,mTicks)`, so N=1/2 still uses at least three steps. New targets replace the
-active target or one pending target; no growing queue was found statically.
+## Known limits
 
-0.2.0 changed only the engaged payload, not the elapsed gate, causing a short lerp
-followed by waiting in the user's tests. 0.2.1 suspended that cap and measured a
-native far-actor gap around seven ticks. Earlier “send interval” claims for 0.2.0
-were incorrect. The user found 0.3.0 substantially smoother, with a slight hitch
-remaining outside vanilla. The user accepted 0.3.1: no hitch at vanilla, 4, 2 or 1.
-0.3.2 retains that movement behavior unchanged.
-
-Missing movement keys receive side defaults. Missing `full_rate_types` alone
-defaults to `["minecraft:player"]`; explicit empty or nonempty lists replace it.
-`full_rate_players` is removed: old files load with that key ignored, log once,
-and drop it on the next successful save. Player canonical-ID evidence is in the
-[safety notes](docs/movement-0.3.0.md); actual player use of this path remains
-unproven until a second player is tested. Example server config:
-
-```json
-{"actor_interest_chunks":32,"update_interval":4,"full_rate_types":["minecraft:player","minecraft:villager"],"full_rate_tags":["urde_full_rate"]}
-```
-
-Apply list edits with `/urde reload` or `/urdec reload`. For example,
-`/tag @e[type=minecraft:pig] add urde_full_rate` assigns that vanilla tag; its
-movement rule selects N=1. `vanilla` disables both list overrides too.
-`status` includes the interval and both list sizes; client status
-also reports `hosting_movement(last_server_tick)` or `native/inactive`. These
-client keys live in `client.json`; hosting movement applies only in the matching
-in-process server tick. A remote-joined client cannot control the remote
-server's interval hook; use the server build there.
-
-More frequent movement costs more packets: estimate roughly **+70% at N=4** and
-**about 6x at N=1** versus the observed native ~7-tick gap for distant moving
-actors. These are estimates, not measured bandwidth multipliers; packet size,
-compression, bypasses, TPS and recipient count matter. LAN guests incur network
-cost even when the host is local.
-
-See the [accepted movement rule](docs/movement-0.3.1.md) for details. The bounded
-65,536-slot pair table retains IDs/ticks only, expires unseen pairs after about
-10 seconds of server ticks, and clears on vanilla/exit/generation/disable.
-
-The user's animal stopping around 160 blocks was attributed to server
-tick-distance; render/interest range does not extend simulation. **Players remain
-untested on this movement path: no second-player test has been performed.**
-Local hosting, lifecycle changes and native prediction interaction still need
-broader acceptance testing.
-
-- Server: horizontal chunk disk `dx*dx + dz*dz <= r*r`, no vertical cutoff.
-  Radius 8 contains **197** offsets. Explicit vanilla uses the native **57**
-  unchanged; radius 4 would contain only 49. Only the replication-scoped sorted
-  position call is replaced; shared offsets and unrelated spawn/loading/ticking
-  consumers are untouched. Chunks must already be resident/ready. Long-range
-  movement, metadata, equipment and events need live validation. Autonomous
-  retention can prevent removal after shrinking.
-- Entities: the ordinary collector uses the existing cube half-width and, in
-  `circle` mode, filters actor positions to horizontal distance `<= entity_range`
-  from the camera target (a cylinder with the existing vertical cube bound).
-  `square` retains the existing cube behavior. The filtered span is backed by a
-  queue-scope-owned vector that outlives the native synchronous consumer; `square`
-  and `vanilla` retain native span storage. Frustum/culler/renderer/resource-pack
-  gates remain intact. Supplemental player selection and shadows are not extended
-  or guaranteed.
-- Block entities: collector cube plus strict **3D point-to-AABB distance < range**
-  for collected components using the native base predicate. Special derived
-  predicates remain in force (including derived code calling the changed base).
-   0.1.2 also scopes the **second base predicate check at world draw time**, using
-   the owned player camera's final opaque/alpha component list and render-context
-   target position. This fixes a statically proven native 64-block gate missed by
-   the queue-only scope; the user confirmed chests visible to 128 in 0.1.2.
-    Shadows, UI/items, unrelated cameras and unscoped calls remain native. See the
-   [caller map and proof limits](docs/block-entity-0.1.2.md).
-- Enabled collectors ignore short fog limits; `vanilla` restores the native
-  fog-limited collectors. **Visual fog is unchanged.**
-- Terrain detail: a **single experimental shared High/Low terrain LOD threshold**
-  for eligible vegetation, leaves and raster glass, measured from 3D subchunk
-  centers and truncated to an integer before squaring. It is not a per-block or
-  three-category control. **VV/RTX glass transparency is NOT guaranteed.** Culler
-  refresh timing, backend materials and pack-dependent geometry need live checks.
-- Fancy leaves stays native. Distance changes alone do not rebuild meshes or
-  create faces omitted at build time; native fancy/layer/backend changes can
-  require rebuilding. No universal renderer/long-range-shadow guarantee.
-- More interest scans, network/viewer state, render candidates, alpha overdraw and
-  VRAM usage are possible. `197/57` is an input-count ratio, not a measured CPU or
-  bandwidth multiplier. Bounds are safety limits, not performance recommendations.
-
-Disconnect/world/dimension changes invalidate generation-scoped state; no queued
-work captures game pointers. Disabling refreshes surviving cameras natively on
-their owner thread before removing hooks. If that thread cannot acknowledge within
-five seconds, disabling/unloading fails closed: allow client ticks and retry;
-**do not force-unload**. Runtime lifecycle and multi-camera behavior are untested.
+- Terrain detail is a single experimental threshold for vegetation, leaves and glass. It does not guarantee glass transparency under Vibrant Visuals or ray tracing, and it does not change fancy leaves.
+- Shadows (Vibrant Visuals) are not extended.
+- Actors beyond the server's `tick-distance` stand still.
+- A remote server's movement and range settings cannot be changed from the client; use the server build there.
+- The movement lever has been tested with animals. Other players on this path have not been tested yet.
+- Longer ranges mean more actors to process and send. Network and CPU costs were estimated, not measured.
 
 ## Build
 
@@ -239,16 +131,12 @@ xmake f -a x64 -m release -p windows --target_type=client -y
 xmake build
 ```
 
-Optional pure validation/scope checks: `xmake build urde-checks`, then
-`xmake run urde-checks` (does not load the game).
+Output goes to `bin/server/UtilityRenderDistanceExpansion/` and
+`bin/client/UtilityRenderDistanceExpansion/`. `xmake build urde-checks` followed by
+`xmake run urde-checks` runs the game-independent checks.
 
-Target/DLL: `UtilityRenderDistanceExpansion`. Packaging output, kept separate per
-`target_type`: `bin/server/UtilityRenderDistanceExpansion/` and
-`bin/client/UtilityRenderDistanceExpansion/`. See [implementation notes](docs/implementation.md)
-for hook signatures and the live acceptance checklist. Builds are not runtime
-certification; no game launch is needed to build.
-
-The dedicated-server package belongs in `mods/UtilityRenderDistanceExpansion/`.
+Developer notes (hook signatures, reverse-engineering evidence, live acceptance
+notes) are in [docs/](docs/).
 
 ## License
 

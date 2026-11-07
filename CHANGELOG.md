@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0]
+
+First stable release, for Bedrock 1.26.60 and LeviLamina `>=26.60.2 <26.61.0`. Functionally identical to 0.3.2.
+
+- Server and client builds with separate `/urde` and `/urdec` commands and `server.json` / `client.json` configs.
+- Actor replication range (server, and the in-process server when hosting), client actor drawing range with circle or square shape, block-entity range through both native gates, and an experimental shared terrain-detail distance.
+- Distant movement lever: sends updates sooner than the native gate and writes the real elapsed time into the packet so interpolation stays smooth; per-type and per-tag full-rate lists.
+- README rewritten for users. The server package installs to `mods/` (LeviLamina 26.60 layout).
+- Removed the `symbol_missing` build rule so a fresh clone builds without extra tools.
+- Known untested: other players on the movement path; shadows are not extended.
+
 ## [0.3.2]
 
 - Remove all temporary command-hint roots, registry/AvailableCommands audits, their header, and the build option/define. Keep the accepted real command usage and error messages unchanged.
