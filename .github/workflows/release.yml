@@ -44,7 +44,7 @@ jobs:
         with:
           name: ${{ github.event.repository.name }}-${{ github.sha }}-${{ matrix.target_type }}-windows-x64
           path: |
-            bin/
+            bin/${{ matrix.target_type }}/
 
   update-release-notes:
     permissions:

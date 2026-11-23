@@ -24,7 +24,7 @@ shadows. Actors only move inside the server's simulation range (`tick-distance`)
 
 ## Install
 
-Use `lip` with `tooth.json`, or copy the folder by hand.
+Use `lip` with `lip.toml`, or copy the folder by hand.
 
 | Build | Copy `UtilityRenderDistanceExpansion/` to |
 |---|---|

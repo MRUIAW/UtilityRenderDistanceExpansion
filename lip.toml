@@ -1,0 +1,33 @@
+format = 4
+id = "github.com/MRUIAW/UtilityRenderDistanceExpansion"
+version = "1.0.1"
+
+[info]
+name = "URDE | UtilityRenderDistanceExpansion"
+description = "Independent server actor-interest and client collection/detail ranges"
+tags = ["platform:levilamina", "type:mod"]
+logo = "https://raw.githubusercontent.com/MRUIAW/UtilityRenderDistanceExpansion/refs/heads/main/assets/URDE_logo.png"
+
+[[variants.""]]
+side = "server"
+platform = "win-x64"
+
+[variants."".deps]
+"github.com/LiteLDev/LeviLamina" = ">=26.60.2 <26.61.0"
+
+[[variants."".assets]]
+type = "zip"
+urls = ["https://{{id}}/releases/download/v{{version}}/UtilityRenderDistanceExpansion-server-windows-x64.zip"]
+place = [{ src = "UtilityRenderDistanceExpansion/", dest = "mods/UtilityRenderDistanceExpansion/" }]
+
+[[variants.""]]
+side = "client"
+platform = "win-x64"
+
+[variants."".deps]
+"github.com/LiteLDev/LeviLamina" = ">=26.60.2 <26.61.0"
+
+[[variants."".assets]]
+type = "zip"
+urls = ["https://{{id}}/releases/download/v{{version}}/UtilityRenderDistanceExpansion-client-windows-x64.zip"]
+place = [{ src = "UtilityRenderDistanceExpansion/", dest = "mods/UtilityRenderDistanceExpansion/" }]

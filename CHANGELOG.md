@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.1]
+
+- Migrate lip package manifest from `tooth.json` to `lip.toml` (format 4) with unified `server` and `client` variants.
+- Fix GitHub Actions release archive layout so `UtilityRenderDistanceExpansion/` sits at the root of each release ZIP for `lip` installation.
+
 ## [1.0.0]
 
 First stable release, for Bedrock 1.26.60 and LeviLamina `>=26.60.2 <26.61.0`. Functionally identical to 0.3.2.
