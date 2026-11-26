@@ -21,7 +21,7 @@ struct VanillaParams { Key setting; };
 struct ShapeParams { UrdeEntityShape shape; };
 static_assert(ll::command::ParamTraits<float>::parseRuleValue() == CommandRegistry::HardNonTerminal::Val);
 static_assert(ll::command::ParamTraits<int>::parseRuleValue() == CommandRegistry::HardNonTerminal::Int);
-static_assert(magic_enum::enum_count<UrdeClientKey>() == 5 && magic_enum::enum_count<UrdeServerKey>() == 2);
+static_assert(magic_enum::enum_count<UrdeClientKey>() == 7 && magic_enum::enum_count<UrdeServerKey>() == 2);
 using SetControl = std::function<std::string(std::string const&, std::string const&)>;
 
 // Do not use LL26.60.2 deoption(): it uses logical ! instead of bitwise ~.

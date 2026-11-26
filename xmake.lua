@@ -1,7 +1,7 @@
 add_rules("mode.debug", "mode.release")
 
 -- Single version constant; keep lip.toml in sync.
-local urde_version = "1.0.1"
+local urde_version = "1.1.0"
 set_version(urde_version)
 
 add_repositories("levimc-repo https://github.com/LiteLDev/xmake-repo.git")
@@ -15,7 +15,7 @@ option_end()
 -- add_requires("levilamina x.x.x") for a specific version
 -- add_requires("levilamina develop") to use develop version
 -- please note that you should add bdslibrary yourself if using dev version
-add_requires("levilamina 26.60.2", {configs = {target_type = get_config("target_type")}})
+add_requires("levilamina 26.60.9", {configs = {target_type = get_config("target_type")}})
 
 add_requires("levibuildscript")
 add_requires("nlohmann_json v3.12.0")

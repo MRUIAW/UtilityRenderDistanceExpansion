@@ -1,6 +1,6 @@
 format = 4
 id = "github.com/MRUIAW/UtilityRenderDistanceExpansion"
-version = "1.0.1"
+version = "1.1.0"
 
 [info]
 name = "URDE | UtilityRenderDistanceExpansion"
@@ -13,7 +13,7 @@ side = "server"
 platform = "win-x64"
 
 [variants."".deps]
-"github.com/LiteLDev/LeviLamina" = ">=26.60.2 <26.61.0"
+"github.com/LiteLDev/LeviLamina" = ">=26.60.9 <26.61.0"
 
 [[variants."".assets]]
 type = "zip"
@@ -25,7 +25,7 @@ side = "client"
 platform = "win-x64"
 
 [variants."".deps]
-"github.com/LiteLDev/LeviLamina" = ">=26.60.2 <26.61.0"
+"github.com/LiteLDev/LeviLamina" = ">=26.60.9 <26.61.0"
 
 [[variants."".assets]]
 type = "zip"

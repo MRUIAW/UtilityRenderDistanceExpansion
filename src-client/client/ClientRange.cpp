@@ -3,6 +3,7 @@
 #include "range/CommandErrorOutput.h"
 #include "range/Config.h"
 #include "range/Limits.h"
+#include "range/Particle.h"
 #include "range/Scope.h"
 #include "range/HookInstall.h"
 #include "range/Replication.h"
@@ -23,10 +24,14 @@
 #include "ll/api/service/TargetedBedrock.h"
 #include "ll/api/service/Bedrock.h"
 #include "mc/client/multiplayer/ClientLevel.h"
+#include "mc/client/particlesystem/particle/ParticleEmitterActual.h"
+#include "mc/client/particlesystem/particle/components/EmitterRateManualComponent.h"
 #include "mc/client/renderer/BaseActorRenderContext.h"
 #include "mc/client/renderer/game/LevelRenderer.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/client/renderer/game/LevelRendererShadowCamera.h"
+#include "mc/world/ParticleProvider.h"
+#include "mc/world/ParticleSystemInterface.h"
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/block/actor/VanillaBlockActor.h"
 
@@ -80,9 +85,22 @@ struct QueueContext {
     std::unordered_set<IVanillaRenderBlockActorComponent const*> components;
     std::vector<gsl::not_null<Actor*>> filteredActors;
 };
+struct ManualEmitContext {
+    uint64_t generation;
+    ParticleSystem::ComponentAccessParticleEmitter const* emitter;
+    uint64_t capacity;
+};
 thread_local QueueContext* queueContext = nullptr;
 thread_local QueueContext* drawContext = nullptr;
+thread_local ManualEmitContext* manualEmitContext = nullptr;
 thread_local bool nativeRefresh = false;
+
+bool validClientLevel(Level const* level) {
+    if (!enabled || !session || !level || level != ownerLevel.load() || !level->isClientSide()) return false;
+    auto client = ll::service::getClientInstance();
+    auto mp = ll::service::getMultiPlayerLevel();
+    return client && mp && client->getLevel() == &*mp && &*mp == level;
+}
 
 bool validCamera(LevelRendererCamera& camera) {
     if (!session.load()) return false;
@@ -121,6 +139,11 @@ using FetchActors = gsl::span<gsl::not_null<Actor*>> (BlockSource::*)(Actor cons
 using FetchBlockActors = void (BlockSource::*)(AABB const&, std::vector<gsl::not_null<IVanillaRenderBlockActorComponent*>>&, bool);
 using Within = bool (VanillaBlockActor::*)(Vec3 const&) const;
 using FarDetail = void (LevelRendererCamera::*)();
+using AddParticle = Particle* (Level::*)(ParticleType, Vec3 const&, Vec3 const&, int, CompoundTag const*, bool);
+using EmitManual = void (ParticleSystem::ParticleEmitterActual::*)(Vec3 const&, Vec3 const&, float const);
+using ManualAllowed = uint64 (ParticleSystem::EmitterRateManualComponent::*)(
+    ParticleSystem::ComponentAccessParticleEmitter&, RenderParams&
+);
 static_assert(std::is_same_v<decltype(&LevelRendererCamera::queueRenderEntities), Queue>);
 static_assert(std::is_same_v<decltype(&LevelRendererCamera::$queueRenderEntities), Queue>);
 static_assert(std::is_same_v<decltype(&LevelRendererCamera::renderBlockEntities), DrawBlocks>);
@@ -131,6 +154,16 @@ static_assert(std::is_same_v<decltype(&BlockSource::fetchRenderBlockActorCompone
 static_assert(std::is_same_v<decltype(&VanillaBlockActor::isWithinRenderDistance), Within>);
 static_assert(std::is_same_v<decltype(&VanillaBlockActor::$isWithinRenderDistance), Within>);
 static_assert(std::is_same_v<decltype(&LevelRendererCamera::updateFarChunksDistance), FarDetail>);
+static_assert(std::is_same_v<decltype(&Level::addParticle), AddParticle>);
+static_assert(std::is_same_v<decltype(&Level::$addParticle), AddParticle>);
+static_assert(std::is_same_v<decltype(&ParticleSystem::ParticleEmitterActual::emitParticleManually), EmitManual>);
+static_assert(std::is_same_v<decltype(&ParticleSystem::ParticleEmitterActual::$emitParticleManually), EmitManual>);
+static_assert(std::is_same_v<decltype(&ParticleSystem::EmitterRateManualComponent::getNumberOfManualParticlesAllowed), ManualAllowed>);
+static_assert(std::is_same_v<decltype(&ParticleSystem::EmitterRateManualComponent::$getNumberOfManualParticlesAllowed), ManualAllowed>);
+static_assert(std::is_base_of_v<ParticleSystem::ComponentAccessParticleEmitter, ParticleSystem::ParticleEmitterActual>);
+static_assert(std::is_base_of_v<ParticleSystem::ParticleEmitter, ParticleSystem::ComponentAccessParticleEmitter>);
+static_assert(std::is_base_of_v<ParticleSystem::EmitterRateComponentBase, ParticleSystem::EmitterRateManualComponent>);
+static_assert(sizeof(ParticleSystem::ParticleEmitterActual::mMaxNumParticles) == sizeof(uint64));
 
 LL_TYPE_INSTANCE_HOOK(FarChunks, ll::memory::HookPriority::Normal, LevelRendererCamera,
     &LevelRendererCamera::updateFarChunksDistance, void) {
@@ -251,6 +284,58 @@ LL_TYPE_INSTANCE_HOOK(BlockWithin, ll::memory::HookPriority::Normal, VanillaBloc
     }
     return origin(position); // derived overrides are not detoured
 }
+LL_TYPE_INSTANCE_HOOK(AddParticleHook, ll::memory::HookPriority::Normal, Level,
+    &Level::$addParticle, Particle*,
+    ParticleType id, Vec3 const& pos, Vec3 const& dir, int data, CompoundTag const* tag, bool isGlobal) {
+    auto* level = thisFor<Level>();
+    auto snapshot = config.active();
+    if (!snapshot || !snapshot->particleRange || !validClientLevel(level)) {
+        return origin(id, pos, dir, data, tag, isGlobal);
+    }
+    auto* provider = level->mParticleProvider.get().get();
+    auto* psi = provider ? provider->mParticleSystemInterface.get() : nullptr;
+    if (!psi) return origin(id, pos, dir, data, tag, isGlobal);
+    float distSqr = psi->getDistanceToCameraSqr(pos);
+    float pvd = psi->getParticleViewDistance();
+    int viewChunks = psi->getViewDistanceChunks();
+    float radius = particle::effectiveRadius(snapshot->particleRange, viewChunks, pvd, isGlobal);
+    if (!std::isfinite(distSqr) || !std::isfinite(pvd) || !std::isfinite(radius) || radius < 0.0f) {
+        return origin(id, pos, dir, data, tag, isGlobal);
+    }
+    if (!particle::withinRadius(distSqr, radius)) return nullptr;
+    return psi->instance(id, pos, dir, data, tag);
+}
+LL_TYPE_INSTANCE_HOOK(EmitParticleManuallyHook, ll::memory::HookPriority::Normal, ParticleSystem::ParticleEmitterActual,
+    &ParticleSystem::ParticleEmitterActual::$emitParticleManually, void,
+    Vec3 const& particlePosition, Vec3 const& velocityAdd, float const scaleMult) {
+    auto* emitter = thisFor<ParticleSystem::ParticleEmitterActual>();
+    auto snapshot = config.active();
+    if (!enabled || !session || !snapshot || !snapshot->particleCapacity || !emitter->isManualEmitter()
+        || !validClientLevel(ownerLevel.load())) {
+        Scope clear(manualEmitContext, static_cast<ManualEmitContext*>(nullptr));
+        return origin(particlePosition, velocityAdd, scaleMult);
+    }
+    ManualEmitContext context{generation.load(), emitter, snapshot->particleCapacity};
+    Scope scope(manualEmitContext, &context);
+    struct RestoreMax {
+        uint64& target;
+        uint64 saved;
+        RestoreMax(uint64& targetRef, uint64 value) : target(targetRef), saved(targetRef) { target = value; }
+        ~RestoreMax() { target = saved; }
+    } restoreMax(emitter->mMaxNumParticles, snapshot->particleCapacity);
+    origin(particlePosition, velocityAdd, scaleMult);
+}
+LL_TYPE_INSTANCE_HOOK(ManualParticlesAllowedHook, ll::memory::HookPriority::Normal,
+    ParticleSystem::EmitterRateManualComponent,
+    &ParticleSystem::EmitterRateManualComponent::$getNumberOfManualParticlesAllowed, uint64,
+    ParticleSystem::ComponentAccessParticleEmitter& emitter, RenderParams& renderParams) {
+    uint64 nativeAllowed = origin(emitter, renderParams);
+    auto* context = manualEmitContext;
+    if (enabled && session && context && context->generation == generation.load() && context->emitter == &emitter) {
+        return particle::effectiveManualCapacity(nativeAllowed, context->capacity);
+    }
+    return nativeAllowed;
+}
 
 // Reacquire live, shared-owned cameras each tick; never cache a raw camera or
 // capture one in a queued command. All three native active renderer cameras are
@@ -311,6 +396,8 @@ void tick(Level& level) {
 std::string describe(Config const& value) {
     return "entity_range=" + rangeText(value.entityRange) + " block_entity_range=" + rangeText(value.blockEntityRange)
          + " terrain_detail=" + rangeText(value.terrainDetail)
+         + " particle_range=" + rangeText(value.particleRange)
+         + " particle_capacity=" + particle::capacityText(value.particleCapacity)
          + " entity_shape=" + std::string(value.entityShape == UrdeEntityShape::circle ? "circle" : "square")
          + " replication_margin=" + commandNumberText(value.replicationMargin) + " " + value.movement.describe();
 }
@@ -331,6 +418,7 @@ std::string status() {
              + " local_replication_chunks(last_server_tick)=" + rangeText(float(replication::effectiveRadius()))
             + "; hosting_movement(last_server_tick): " + replication::effectiveMovement()
            + "; terrain_detail experimental=true (VV/RTX glass NOT guaranteed); enabled collection ignores fog (vanilla keeps native fog limit), visual fog unchanged; "
+            "particle_range applies to Level::addParticle (isGlobal=true keeps native floor); particle_capacity raises manual emitter caps without eviction; "
             "entity shape applies to ordinary collection / strict 3D block-AABB predicate / integer subchunk-center terrain LOD; "
             "residency, culler and renderer gates still apply; remote server /urde still caps available actors";
 }
@@ -359,7 +447,10 @@ bool enable() {
         "?$fetchEntities@BlockSource@@QEAA?AV?$span@V?$not_null@PEAVActor@@@gsl@@$0?0@gsl@@PEBVActor@@AEBVAABB@@_N2@Z",
         "?fetchRenderBlockActorComponents@BlockSource@@QEAAXAEBVAABB@@AEAV?$vector@V?$not_null@PEAVIVanillaRenderBlockActorComponent@@@gsl@@V?$allocator@V?$not_null@PEAVIVanillaRenderBlockActorComponent@@@gsl@@@std@@@std@@_N@Z",
         "?$isWithinRenderDistance@VanillaBlockActor@@QEBA_NAEBVVec3@@@Z",
-        "?updateFarChunksDistance@LevelRendererCamera@@QEAAXXZ"
+        "?updateFarChunksDistance@LevelRendererCamera@@QEAAXXZ",
+        "?$addParticle@Level@@QEAAPEAVParticle@@W4ParticleType@@AEBVVec3@@1HPEBVCompoundTag@@_N@Z",
+        "?$emitParticleManually@ParticleEmitterActual@ParticleSystem@@QEAAXAEBVVec3@@0M@Z",
+        "?$getNumberOfManualParticlesAllowed@EmitterRateManualComponent@ParticleSystem@@QEAA_KAEAVComponentAccessParticleEmitter@2@AEAVRenderParams@@@Z"
     }) if (!requireSymbol(symbol)) return false;
     // Manual registration permits fail-closed rollback, unlike an auto registrar.
     if (!installHook<FarChunks>("LevelRendererCamera::updateFarChunksDistance")) return false;
@@ -372,6 +463,19 @@ bool enable() {
     if (!installHook<DrawBlockEntities>("LevelRendererCamera::renderBlockEntities")) {
         BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook(); return false;
     }
+    if (!installHook<AddParticleHook>("Level::addParticle")) {
+        ManualParticlesAllowedHook::unhook(); EmitParticleManuallyHook::unhook(); AddParticleHook::unhook();
+    DrawBlockEntities::unhook(); BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
+        return false;
+    }
+    if (!installHook<EmitParticleManuallyHook>("ParticleEmitterActual::emitParticleManually")) {
+        AddParticleHook::unhook(); DrawBlockEntities::unhook(); BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
+        return false;
+    }
+    if (!installHook<ManualParticlesAllowedHook>("EmitterRateManualComponent::getNumberOfManualParticlesAllowed")) {
+        EmitParticleManuallyHook::unhook(); AddParticleHook::unhook(); DrawBlockEntities::unhook(); BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
+        return false;
+    }
     if (!replication::enable([]() -> std::shared_ptr<replication::Range const> {
         // Pin requested directly on the IN-PROCESS SERVER tick; client effective
         // publication remains owned exclusively by the client tick.
@@ -380,7 +484,9 @@ bool enable() {
         auto* range = &snapshot->localReplication;
         return std::shared_ptr<replication::Range const>(std::move(snapshot), range);
     })) {
-        DrawBlockEntities::unhook(); BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
+        ManualParticlesAllowedHook::unhook(); EmitParticleManuallyHook::unhook(); AddParticleHook::unhook();
+        ManualParticlesAllowedHook::unhook(); EmitParticleManuallyHook::unhook(); AddParticleHook::unhook();
+    DrawBlockEntities::unhook(); BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
         return false;
     }
     installed = true;
@@ -425,6 +531,7 @@ bool disable() {
     for (auto const& listener : {commandListener,commandErrorListener,tickListener,exitListener,joinListener,stopListener})
         if (listener) bus.removeListener(listener);
     commandListener = commandErrorListener = tickListener = exitListener = joinListener = stopListener = nullptr;
+    ManualParticlesAllowedHook::unhook(); EmitParticleManuallyHook::unhook(); AddParticleHook::unhook();
     DrawBlockEntities::unhook(); BlockWithin::unhook(); FetchBlockEntities::unhook(); FetchEntities::unhook(); QueueEntities::unhook(); FarChunks::unhook();
     installed = false;
     config.clearEffective();

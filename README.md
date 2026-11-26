@@ -5,8 +5,8 @@ actors, see block entities and keep terrain detail **farther than vanilla**, and
 distant movement smooth. It has a **server build** (dedicated server) and a
 **client build** (also covers single-player and LAN hosting).
 
-- Game: Bedrock **1.26.60** (client 1.26.60.05, BDS 1.26.60.2), Windows x64.
-- Requires **LeviLamina `>=26.60.2 <26.61.0`**.
+- Game: Bedrock **1.26.60** (client 1.26.60.05, BDS 1.26.60.2+), Windows x64.
+- Requires **LeviLamina `>=26.60.9 <26.61.0`**.
 - License: LGPL-3.0.
 
 ## What it does
@@ -17,6 +17,8 @@ distant movement smooth. It has a **server build** (dedicated server) and a
 | Draw actors farther away | client | 512 blocks |
 | Draw block entities (chests, signs, ...) farther away | client | 512 blocks |
 | Keep vegetation, leaves and glass at high detail farther away (**experimental**) | client | 512 blocks |
+| Spawn distance-gated particles farther away (`Level::addParticle`) | client | 512 blocks |
+| Raise manual particle emitter caps (without eviction) | client | 16384 |
 | Update distant moving actors more often, with matching interpolation | server, and the client when it hosts a world | 4 ticks (server), 1 tick (hosting) |
 
 It does not change fog, fancy leaves, view distance, tick distance, chunk loading or
@@ -70,6 +72,8 @@ The in-game grey syntax hint does not list `reload`, but Tab completes it and it
 | `/urdec` | `entity_range` | 512 | 1..512, or `vanilla` | How far actors are drawn. |
 | `/urdec` | `block_entity_range` | 512 | 1..512, or `vanilla` | How far block entities are drawn. |
 | `/urdec` | `terrain_detail` | 512 | 1..512, or `vanilla` | Distance up to which vegetation, leaves and raster glass keep high detail. **Experimental.** |
+| `/urdec` | `particle_range` | 512 | 1..512, or `vanilla` | Distance gate for `Level::addParticle` particles (`isGlobal=true` preserves native floor). |
+| `/urdec` | `particle_capacity` | 16384 | whole 1..65536, or `vanilla` | Per-emitter cap for manual particle emitters (`isManualEmitter()`); full emitters reject new particles without eviction. |
 | `/urdec` | `entity_shape` | circle | `circle`, `square` | `circle` draws actors within a horizontal circle of `entity_range`; `square` uses a cube. |
 | `/urdec` | `replication_margin` | 16 | 0..512 | Extra blocks of replication beyond `entity_range` when you host a world. |
 | `/urdec` | `update_interval` | 1 | whole 1..10, or `vanilla` | Same as the server setting, for the world you host. |
@@ -88,7 +92,7 @@ Example `server.json`:
 Example `client.json`:
 
 ```json
-{"entity_range":512,"block_entity_range":512,"terrain_detail":512,"entity_shape":"circle","replication_margin":16,"update_interval":1,"full_rate_types":["minecraft:player"],"full_rate_tags":[]}
+{"entity_range":512,"block_entity_range":512,"terrain_detail":512,"particle_range":512,"particle_capacity":16384,"entity_shape":"circle","replication_margin":16,"update_interval":1,"full_rate_types":["minecraft:player"],"full_rate_tags":[]}
 ```
 
 ## How the ranges work together
@@ -103,6 +107,15 @@ replication_margin` automatically, and never uses less than vanilla.
 **Block entities** (`block_entity_range`) and **terrain detail** (`terrain_detail`)
 are client-only; the server does not need to do anything, but the chunks must be
 loaded (server `view-distance`).
+
+**Particles** (`particle_range` and `particle_capacity`) are also client-only.
+Vanilla `Level::addParticle` drops `isGlobal=false` particles beyond 32 blocks by
+default (when `gfx_particleviewdistance` is `0`) and caps `isGlobal=true` at 5x
+that radius; `particle_range` replaces this gate through `ParticleSystemInterface::instance`
+(preserving the native floor for `isGlobal=true`). `particle_capacity` raises the
+allowance and maximum particle count on manual emitters only (such as shared smoke
+or campfire trail emitters) without changing automatic emitters or performing
+oldest-first eviction.
 
 **Smooth distant movement.** Vanilla sends far-away actors about every 7 ticks and
 tells the client to glide over that time. `update_interval` makes the server send

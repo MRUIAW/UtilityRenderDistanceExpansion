@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0] - 2026-11-27
+
+- Upgrade LeviLamina requirement to `26.60.9` (`>=26.60.9 <26.61.0`) for both server and client packages.
+- Add client `particle_range` (default `512` blocks, `1..512` or `vanilla`): hooks `Level::$addParticle` to replace the 32-block default / 5x global camera distance gate via `ParticleSystemInterface::instance`. For `isGlobal=true` requests, preserves `max(particle_range, native_global_radius)`.
+- Add client `particle_capacity` (default `16384`, whole `1..65536` or `vanilla`): hooks `ParticleEmitterActual::$emitParticleManually` and `EmitterRateManualComponent::$getNumberOfManualParticlesAllowed` to raise manual particle emitter caps without oldest-first eviction.
+- Add pure unit checks covering particle distance/capacity decisions, legacy config defaults, validation, and command misuse rules.
+
 ## [1.0.1]
 
 - Migrate lip package manifest from `tooth.json` to `lip.toml` (format 4) with unified `server` and `client` variants.

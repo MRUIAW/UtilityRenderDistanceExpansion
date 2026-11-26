@@ -1,4 +1,5 @@
 #include "range/Limits.h"
+#include "range/Particle.h"
 #include "range/Scope.h"
 #include "range/Config.h"
 #include "range/CommandValues.h"
@@ -35,6 +36,54 @@ int main() {
         assert(commandMisuse(line,false).empty());
     assert(commandMisuse("urdec set entity_shape circle",true).empty());
     assert(commandMisuse("urdec set entity_shape square",true).empty());
+    assert(commandMisuse("urdec set particle_range square",true) == "circle/square require entity_shape");
+    assert(commandMisuse("urdec set particle_capacity circle",true) == "circle/square require entity_shape");
+
+    // Particle distance & manual emitter capacity checks
+    assert(particle::nativeRadius(4, 0.0f, false) == 32.0f);
+    assert(particle::nativeRadius(32, 0.0f, false) == 32.0f);
+    assert(particle::nativeRadius(32, 0.0f, true) == 160.0f);
+    assert(particle::nativeRadius(4, 1.0f, false) == 40.0f);
+    assert(particle::nativeRadius(8, 1.0f, false) == 64.0f);
+    assert(particle::nativeRadius(32, 1.0f, false) == 64.0f);
+    assert(particle::nativeRadius(32, 1.0f, true) == 320.0f);
+    assert(particle::effectiveRadius(0.0f, 32, 0.0f, false) == 32.0f);
+    assert(particle::effectiveRadius(0.0f, 32, 0.0f, true) == 160.0f);
+    assert(particle::effectiveRadius(512.0f, 32, 0.0f, false) == 512.0f);
+    assert(particle::effectiveRadius(24.0f, 32, 0.0f, false) == 24.0f);
+    assert(particle::effectiveRadius(64.0f, 32, 0.0f, true) == 160.0f);
+    assert(particle::effectiveRadius(512.0f, 32, 1.0f, true) == 512.0f);
+    assert(particle::withinRadius(512.0f * 512.0f, 512.0f));
+    assert(!particle::withinRadius(512.0f * 512.0f + 1.0f, 512.0f));
+    assert(particle::effectiveManualCapacity(200, 0) == 200);
+    assert(particle::effectiveManualCapacity(0, 16384) == 0);
+    assert(particle::effectiveManualCapacity(200, 16384) == 16384);
+    assert(particle::effectiveManualCapacity(50, 65536) == 65536);
+    assert(particle::parseCapacity("vanilla") == 0);
+    assert(particle::parseCapacity("1") == 1);
+    assert(particle::parseCapacity("16384") == 16384);
+    assert(particle::parseCapacity("16384.0") == 16384);
+    assert(particle::parseCapacity("65536") == 65536);
+    assert(commandNumberText(16384.0f) == "16384");
+    assert(commandNumberText(65536.0f) == "65536");
+    assert(particle::parseCapacity(commandNumberText(16384.0f)) == 16384);
+    assert(particle::parseCapacity(commandNumberText(65536.0f)) == 65536);
+    assert(particle::encodeCapacity(0) == "vanilla" && particle::encodeCapacity(16384) == 16384);
+    assert(particle::capacityText(0) == "vanilla" && particle::capacityText(16384) == "16384");
+    for (auto bad : {"0", "-1", "65537", "1.5", "nan", "inf", "16384junk", ""}) {
+        bool rejected = false;
+        try { (void)particle::parseCapacity(bad); } catch (std::exception const&) { rejected = true; }
+        assert(rejected);
+    }
+    for (auto badJson : {nlohmann::json(0), nlohmann::json(-1), nlohmann::json(65537), nlohmann::json(1.5),
+                         nlohmann::json(nullptr), nlohmann::json(true), nlohmann::json("16384")}) {
+        bool rejected = false;
+        try { (void)particle::readCapacity({{"particle_capacity", badJson}}, "particle_capacity"); }
+        catch (std::exception const&) { rejected = true; }
+        assert(rejected);
+    }
+    assert(particle::readCapacity({{"particle_capacity", "vanilla"}}, "particle_capacity") == 0);
+    assert(particle::readCapacity({{"particle_capacity", 16384}}, "particle_capacity") == 16384);
     auto policy = movement::Settings::decode({{"full_rate_types",{"minecraft:villager"}},
                                               {"full_rate_tags",{"smooth"}}},4);
     assert(policy.updateInterval == 4 && policy.typeIds.contains("minecraft:villager"));
@@ -222,12 +271,26 @@ int main() {
     auto settings = client::Settings::decode(oldClient);
     assert(settings.entityShape == UrdeEntityShape::circle && settings.replicationMargin == 16);
     assert(settings.entityRange == 512 && settings.terrainDetail == 0);
+    assert(settings.particleRange == 512.0f && settings.particleCapacity == 16384);
     settings.set("replication_margin","0");
     settings.set("entity_shape","square");
+    settings.set("particle_range","256");
+    settings.set("particle_capacity","32768");
     assert(settings.encode().at("replication_margin") == 0);
+    assert(settings.encode().at("particle_range") == 256);
+    assert(settings.encode().at("particle_capacity") == 32768);
     assert(client::Settings::decode(settings.encode()).entityShape == UrdeEntityShape::square);
+    assert(client::Settings::decode(settings.encode()).particleRange == 256.0f);
+    assert(client::Settings::decode(settings.encode()).particleCapacity == 32768);
+    settings.set("particle_range","vanilla");
+    settings.set("particle_capacity","vanilla");
+    assert(settings.encode().at("particle_range") == "vanilla" && settings.encode().at("particle_capacity") == "vanilla");
+    assert(client::Settings::decode(settings.encode()).particleRange == 0.0f);
+    assert(client::Settings::decode(settings.encode()).particleCapacity == 0);
     for (auto [key,value] : {std::pair{"entity_shape","sphere"}, {"replication_margin","vanilla"},
-                            {"replication_margin","nan"}, {"replication_margin","-1"}, {"replication_margin","30"}}) {
+                            {"replication_margin","nan"}, {"replication_margin","-1"}, {"replication_margin","30"},
+                            {"particle_range","0"}, {"particle_range","513"},
+                            {"particle_capacity","0"}, {"particle_capacity","1.5"}, {"particle_capacity","65537"}}) {
         bool rejected = false;
         try { auto candidate = settings; candidate.set(key,value); } catch (std::exception const&) { rejected = true; }
         assert(rejected);
